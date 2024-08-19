@@ -30,30 +30,29 @@ impl Display for Token {
 }
 
 fn get_keyword(key: &str) -> Option<Token> {
-    let res = match key {
-        "var" => Token::Var,
-        "class"=> Token::Class,
-        "else" => Token::Else,
-        "fun" => Token::Fun,
-        "for" => Token::For,
-        "if" => Token::If, 
-        "None" => Token::None,
-        "or" => Token::Or,
-        "print" => Token::Print, 
-        "return" => Token::Return,
-        "super" => Token::Super, 
-        "this" => Token::This,
-        "true" => Token::True,
-        "false" => Token::False, 
-        "while" => Token::While,
-        "and" => Token::And, 
-        "ge" => Token::GreaterEqual,
-        "gt" => Token::Greater, 
-        "le" => Token::LessEqual,
-        "lt" => Token::Less,
-        _ => Token::Identifier
-    };
-    Some(res)
+    match key {
+        "var" => Some(Token::Var),
+        "class"=> Some(Token::Class),
+        "else" => Some(Token::Else),
+        "fun" => Some(Token::Fun),
+        "for" => Some(Token::For),
+        "if" => Some(Token::If),
+        "None" => Some(Token::None),
+        "or" => Some(Token::Or),
+        "print" => Some(Token::Print),
+        "return" => Some(Token::Return),
+        "super" => Some(Token::Super),
+        "this" => Some(Token::This),
+        "true" => Some(Token::True),
+        "false" => Some(Token::False),
+        "while" => Some(Token::While),
+        "and" => Some(Token::And),
+        "ge" => Some(Token::GreaterEqual),
+        "gt" => Some(Token::Greater),
+        "le" => Some(Token::LessEqual),
+        "lt" => Some(Token::Less),
+        _ => None
+    }
 }
 
 fn is_num(char: char) -> bool {
