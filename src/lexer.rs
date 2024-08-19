@@ -233,8 +233,7 @@ impl Lexer {
                 } else if is_letter(c) {
                     self.parse_word(tokens);
                 }
-            },
-            _ => ()
+            }
         }
     }
 
@@ -244,8 +243,6 @@ impl Lexer {
         println!("========= ============= =========");
     
         let mut tokens: Vec<Token> = Vec::new();
-        let copy = self.source.clone();
-        let mut chars = copy.chars();
     
         while !self.is_end() {
             self.start = self.current;
