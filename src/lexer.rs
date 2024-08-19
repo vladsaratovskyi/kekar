@@ -43,8 +43,6 @@ impl Display for TokenType {
     }
 }
 
-struct InvalidKeyword;
-
 fn get_keyword(key: &str) -> Option<TokenType> {
     let mut keywords = HashMap::new();
     keywords.insert("var", TokenType::Var);
@@ -61,6 +59,8 @@ fn get_keyword(key: &str) -> Option<TokenType> {
     keywords.insert("this", TokenType::This);
     keywords.insert("true", TokenType::True);
     keywords.insert("while", TokenType::While);
+    keywords.insert("and", TokenType::And);
+    keywords.insert("false", TokenType::False);
     
     let res = keywords.get(key).unwrap().clone();
     Some(res)
