@@ -119,7 +119,7 @@ impl Lexer {
         self.source[self.start..self.current].parse::<i32>().unwrap()
     }
 
-    fn parse_string(&mut self, tokens: &mut Vec<Token>) {
+    fn parse_string(&mut self) -> Option<Token> {
         while self.peek_char() != '"' && !self.is_end() {
             if self.peek_char() == '\n' { self.line += 1 }
             self.move_next();
@@ -130,10 +130,10 @@ impl Lexer {
         }
 
         self.move_next();
-        tokens.push(Token::String(self.get_value()))
+        Some(Token::String(self.get_value()))
     }
 
-    fn parse_number(&mut self, tokens: &mut Vec<Token>) {
+    fn parse_number(&mut self) -> Option<Token> {
         while is_num(self.peek_char()) { self.move_next(); continue; }
 
         if self.peek_char() == '.' && is_num(self.peek_next_char()) {
@@ -141,59 +141,59 @@ impl Lexer {
             while is_num(self.peek_char()) { self.move_next(); continue; }
         }
 
-        tokens.push(Token::Number(self.get_int_value()))
+        Some(Token::Number(self.get_int_value()))
     }
 
-    fn parse_word(&mut self, tokens: &mut Vec<Token>) {
+    fn parse_word(&mut self) -> Option<Token> {
         while is_letter(self.peek_char()) { self.move_next(); continue; }
 
         let value = self.get_value();
-        tokens.push(get_keyword(&value).unwrap());
+        Some(get_keyword(&value).unwrap())
     }
  
-    fn scan_token(&mut self, tokens: &mut Vec<Token>) {
+    fn scan_token(&mut self) -> Option<Token> {
         let char = self.move_next();
         match char {
-            '(' => tokens.push(Token::LeftParen),
-            ')' => tokens.push(Token::RightParen),
-            '{' => tokens.push(Token::LeftBrace),
-            '}' => tokens.push(Token::RightBrace),
-            ',' => tokens.push(Token::Coma),
-            '.' => tokens.push(Token::Dot),
-            '-' => tokens.push(Token::Minus),
-            '+' => tokens.push(Token::Plus),
-            ';' => tokens.push(Token::Semicolon),
-            '*' => tokens.push(Token::Star),
+            '(' => Some(Token::LeftParen),
+            ')' => Some(Token::RightParen),
+            '{' => Some(Token::LeftBrace),
+            '}' => Some(Token::RightBrace),
+            ',' => Some(Token::Coma),
+            '.' => Some(Token::Dot),
+            '-' => Some(Token::Minus),
+            '+' => Some(Token::Plus),
+            ';' => Some(Token::Semicolon),
+            '*' => Some(Token::Star),
             '!' => {
                 let res = self.check_second_char('=');
                 if res {
-                    tokens.push(Token::BangEqual);
+                    Some(Token::BangEqual)
                 } else {
-                    tokens.push(Token::Bang);
+                    Some(Token::Bang)
                 }
             },
             '=' => {
                 let res = self.check_second_char('=');
                 if res {
-                    tokens.push(Token::EqualEqual);
+                    Some(Token::EqualEqual)
                 } else {
-                    tokens.push(Token::Equal);
+                    Some(Token::Equal)
                 }
             },
             '>' => {
                 let res = self.check_second_char('=');
                 if res {
-                    tokens.push(Token::GreaterEqual);
+                    Some(Token::GreaterEqual)
                 } else {
-                    tokens.push(Token::Greater);
+                    Some(Token::Greater)
                 }
             },
             '<' => {
                 let res = self.check_second_char('=');
                 if res {
-                    tokens.push(Token::LessEqual);
+                    Some(Token::LessEqual)
                 } else {
-                    tokens.push(Token::Less);
+                    Some(Token::Less)
                 }
             },
             '/' => {
@@ -202,17 +202,25 @@ impl Lexer {
                     while self.peek_char() != '\n' && !self.is_end() {
                         self.move_next();
                     }
+                    None
                 } else {
-                    tokens.push(Token::Slash)
+                    Some(Token::Slash)
                 }
             },
-            '"' => self.parse_string(tokens),
-            '\n' => self.line += 1,
+            '"' => {
+                self.parse_string()
+            },
+            '\n' => {
+                self.line += 1;
+                None
+            },
             c => {
                 if is_num(c) {
-                    self.parse_number(tokens);
+                    self.parse_number()
                 } else if is_letter(c) {
-                    self.parse_word(tokens);
+                    self.parse_word()
+                } else {
+                    None
                 }
             }
         }
@@ -227,7 +235,11 @@ impl Lexer {
     
         while !self.is_end() {
             self.start = self.current;
-            self.scan_token(&mut tokens);
+            let token = self.scan_token();
+            match token {
+                Some(t) => tokens.push(t),
+                None => ()
+            }
         }
     
         tokens.push(Token::Eof);
