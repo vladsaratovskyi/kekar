@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt::{self, Display};
 use std::fs::{self};
 
@@ -18,7 +17,7 @@ pub enum Token {
     Identifier, String(String), Number(i32),
 
     // Keywords.
-    And, Class, Else, False, Fun, For, If, Nil, Or,
+    And, Class, Else, False, Fun, For, If, None, Or,
     Print, Return, Super, This, True, Var, While,
 
     Eof
@@ -31,29 +30,29 @@ impl Display for Token {
 }
 
 fn get_keyword(key: &str) -> Option<Token> {
-    let mut keywords = HashMap::new();
-    keywords.insert("var", Token::Var);
-    keywords.insert("class", Token::Class);
-    keywords.insert("else", Token::Else);
-    keywords.insert("fun", Token::Fun);
-    keywords.insert("for", Token::For);
-    keywords.insert("if", Token::If);
-    keywords.insert("nil", Token::Nil);
-    keywords.insert("or", Token::Or);
-    keywords.insert("print", Token::Print);
-    keywords.insert("return", Token::Return);
-    keywords.insert("super", Token::Super);
-    keywords.insert("this", Token::This);
-    keywords.insert("true", Token::True);
-    keywords.insert("false", Token::False);
-    keywords.insert("while", Token::While);
-    keywords.insert("and", Token::And);
-    keywords.insert("ge", Token::GreaterEqual);
-    keywords.insert("gt", Token::Greater);
-    keywords.insert("le", Token::LessEqual);
-    keywords.insert("lt", Token::Less);
-    
-    let res = keywords.get(key).unwrap().clone();
+    let res = match key {
+        "var" => Token::Var,
+        "class"=> Token::Class,
+        "else" => Token::Else,
+        "fun" => Token::Fun,
+        "for" => Token::For,
+        "if" => Token::If, 
+        "None" => Token::None,
+        "or" => Token::Or,
+        "print" => Token::Print, 
+        "return" => Token::Return,
+        "super" => Token::Super, 
+        "this" => Token::This,
+        "true" => Token::True,
+        "false" => Token::False, 
+        "while" => Token::While,
+        "and" => Token::And, 
+        "ge" => Token::GreaterEqual,
+        "gt" => Token::Greater, 
+        "le" => Token::LessEqual,
+        "lt" => Token::Less,
+        _ => Token::Identifier
+    };
     Some(res)
 }
 
