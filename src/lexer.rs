@@ -2,33 +2,20 @@ use std::collections::HashMap;
 use std::fmt::{self, Display};
 use std::fs::{self};
 
-#[derive(Debug)]
-pub struct Token {
-    pub token_type: TokenType,
-    lexemme: String,
-    literal: String
-}
-
-impl Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Type {}", self.token_type)
-    }
-}
-
 #[derive(Debug, Clone)]
-pub enum TokenType {
+pub enum Token {
     // Single-character tokens.
     LeftParen, RightParen, LeftBrace, RightBrace,
-    Coma, Dot, Minus, Plus, Semicolon, Slack, Star,
+    Coma, Dot, Minus, Plus, Semicolon, Slash, Star,
 
     // One or two character tokens.
     Bang, BangEqual,
     Equal, EqualEqual,
     Greater, GreaterEqual,
-    Less, LessEqueal,
+    Less, LessEqual,
 
     // Literals.
-    Identifier, String, Number,
+    Identifier, String(String), Number(i32),
 
     // Keywords.
     And, Class, Else, False, Fun, For, If, Nil, Or,
@@ -37,30 +24,34 @@ pub enum TokenType {
     Eof
 }
 
-impl Display for TokenType {
+impl Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
-fn get_keyword(key: &str) -> Option<TokenType> {
+fn get_keyword(key: &str) -> Option<Token> {
     let mut keywords = HashMap::new();
-    keywords.insert("var", TokenType::Var);
-    keywords.insert("class", TokenType::Class);
-    keywords.insert("else", TokenType::Else);
-    keywords.insert("fun", TokenType::Fun);
-    keywords.insert("for", TokenType::For);
-    keywords.insert("if", TokenType::If);
-    keywords.insert("nil", TokenType::Nil);
-    keywords.insert("or", TokenType::Or);
-    keywords.insert("print", TokenType::Print);
-    keywords.insert("return", TokenType::Return);
-    keywords.insert("super", TokenType::Super);
-    keywords.insert("this", TokenType::This);
-    keywords.insert("true", TokenType::True);
-    keywords.insert("while", TokenType::While);
-    keywords.insert("and", TokenType::And);
-    keywords.insert("false", TokenType::False);
+    keywords.insert("var", Token::Var);
+    keywords.insert("class", Token::Class);
+    keywords.insert("else", Token::Else);
+    keywords.insert("fun", Token::Fun);
+    keywords.insert("for", Token::For);
+    keywords.insert("if", Token::If);
+    keywords.insert("nil", Token::Nil);
+    keywords.insert("or", Token::Or);
+    keywords.insert("print", Token::Print);
+    keywords.insert("return", Token::Return);
+    keywords.insert("super", Token::Super);
+    keywords.insert("this", Token::This);
+    keywords.insert("true", Token::True);
+    keywords.insert("false", Token::False);
+    keywords.insert("while", Token::While);
+    keywords.insert("and", Token::And);
+    keywords.insert("ge", Token::GreaterEqual);
+    keywords.insert("gt", Token::Greater);
+    keywords.insert("le", Token::LessEqual);
+    keywords.insert("lt", Token::Less);
     
     let res = keywords.get(key).unwrap().clone();
     Some(res)
@@ -74,18 +65,6 @@ fn is_num(char: char) -> bool {
 fn is_letter(char: char) -> bool {
     let nums = "abcdefghijklmnopqrstuvwxyz_";
     nums.contains(char)
-}
-
-fn add_token(token_type: TokenType, tokens: &mut Vec<Token>) {
-    tokens.push(Token { token_type, lexemme: String::from(""), literal: String::from("")})
-}
-
-fn add_token_with_literal(token_type: TokenType, literal: String, tokens: &mut Vec<Token>) {
-    tokens.push(Token { token_type, lexemme: String::from(""), literal })
-}
-
-fn add_token_with_lexemme(token_type: TokenType, lexemme: String, tokens: &mut Vec<Token>) {
-    tokens.push(Token { token_type, lexemme, literal : String::from("") })
 }
 
 pub struct Lexer {
@@ -136,6 +115,10 @@ impl Lexer {
     fn get_value(&self) -> String {
         self.source[self.start..self.current].to_string()
     }
+    
+    fn get_int_value(&self) -> i32 {
+        self.source[self.start..self.current].parse::<i32>().unwrap()
+    }
 
     fn parse_string(&mut self, tokens: &mut Vec<Token>) {
         while self.peek_char() != '"' && !self.is_end() {
@@ -148,7 +131,7 @@ impl Lexer {
         }
 
         self.move_next();
-        add_token_with_literal(TokenType::String,self.get_value(), tokens)
+        tokens.push(Token::String(self.get_value()))
     }
 
     fn parse_number(&mut self, tokens: &mut Vec<Token>) {
@@ -159,70 +142,69 @@ impl Lexer {
             while is_num(self.peek_char()) { self.move_next(); continue; }
         }
 
-        add_token_with_literal(TokenType::Number, self.get_value(), tokens)
+        tokens.push(Token::Number(self.get_int_value()))
     }
 
     fn parse_word(&mut self, tokens: &mut Vec<Token>) {
         while is_letter(self.peek_char()) { self.move_next(); continue; }
 
         let value = self.get_value();
-        add_token_with_lexemme(get_keyword(&value).unwrap(), value, tokens)
+        tokens.push(get_keyword(&value).unwrap());
     }
  
     fn scan_token(&mut self, tokens: &mut Vec<Token>) {
         let char = self.move_next();
         match char {
-            '(' => add_token(TokenType::LeftParen, tokens),
-            ')' => add_token(TokenType::RightParen, tokens),
-            '{' => add_token(TokenType::LeftBrace, tokens),
-            '}' => add_token(TokenType::RightBrace, tokens),
-            ',' => add_token(TokenType::Coma, tokens),
-            '.' => add_token(TokenType::Dot, tokens),
-            '-' => add_token(TokenType::Minus, tokens),
-            '+' => add_token(TokenType::Plus, tokens),
-            ';' => add_token(TokenType::Semicolon, tokens),
-            '*' => add_token(TokenType::Star, tokens),
+            '(' => tokens.push(Token::LeftParen),
+            ')' => tokens.push(Token::RightParen),
+            '{' => tokens.push(Token::LeftBrace),
+            '}' => tokens.push(Token::RightBrace),
+            ',' => tokens.push(Token::Coma),
+            '.' => tokens.push(Token::Dot),
+            '-' => tokens.push(Token::Minus),
+            '+' => tokens.push(Token::Plus),
+            ';' => tokens.push(Token::Semicolon),
+            '*' => tokens.push(Token::Star),
             '!' => {
                 let res = self.check_second_char('=');
                 if res {
-                    add_token(TokenType::BangEqual, tokens);
+                    tokens.push(Token::BangEqual);
                 } else {
-                    add_token(TokenType::Bang, tokens);
+                    tokens.push(Token::Bang);
                 }
             },
             '=' => {
                 let res = self.check_second_char('=');
                 if res {
-                    add_token(TokenType::EqualEqual, tokens);
+                    tokens.push(Token::EqualEqual);
                 } else {
-                    add_token(TokenType::Equal, tokens);
+                    tokens.push(Token::Equal);
                 }
             },
             '>' => {
                 let res = self.check_second_char('=');
                 if res {
-                    add_token(TokenType::GreaterEqual, tokens);
+                    tokens.push(Token::GreaterEqual);
                 } else {
-                    add_token(TokenType::Greater, tokens);
+                    tokens.push(Token::Greater);
                 }
             },
             '<' => {
                 let res = self.check_second_char('=');
                 if res {
-                    add_token(TokenType::LessEqueal, tokens);
+                    tokens.push(Token::LessEqual);
                 } else {
-                    add_token(TokenType::Less, tokens);
+                    tokens.push(Token::Less);
                 }
             },
             '/' => {
                 let res = self.check_second_char('/');
-                println!("{}", res);
                 if res {
                     while self.peek_char() != '\n' && !self.is_end() {
                         self.move_next();
                     }
                 } else {
-                    add_token(TokenType::Slack, tokens)
+                    tokens.push(Token::Slash)
                 }
             },
             '"' => self.parse_string(tokens),
@@ -249,7 +231,7 @@ impl Lexer {
             self.scan_token(&mut tokens);
         }
     
-        tokens.push(Token { token_type: TokenType::Eof, lexemme: String::from(""), literal: String::from("") });
+        tokens.push(Token::Eof);
         tokens
     }
 }
