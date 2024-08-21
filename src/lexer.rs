@@ -8,7 +8,7 @@ pub enum Token {
     Coma, Dot, Minus, Plus, Semicolon, Slash, Star,
 
     // One or two character tokens.
-    Bang, BangEqual,
+    Bang, NotEqual,
     Equal, EqualEqual,
     Greater, GreaterEqual,
     Less, LessEqual,
@@ -166,7 +166,7 @@ impl Lexer {
             '!' => {
                 let res = self.check_second_char('=');
                 if res {
-                    Some(Token::BangEqual)
+                    Some(Token::NotEqual)
                 } else {
                     Some(Token::Bang)
                 }

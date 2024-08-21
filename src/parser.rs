@@ -85,7 +85,7 @@ impl Parser {
             None => Expr::Semicolon
         };
 
-        println!("Curr token {}", self.current_token());
+        println!("curr token {}", self.current_token());
 
         while self.get_current_token_power() > binding {
             left = self.handle_operator(left);
@@ -102,10 +102,12 @@ impl Parser {
         let mut body = Vec::new();
 
         while self.has_tokens() && self.current_token() != &Token::RightBrace {
-            body.push(self.parse_stmt())
+            println!("curr token {}", self.current_token());
+            self.get_token_and_move();
+            body.push(self.parse_stmt());
         }
 
-        if self.current_token() != &Token::RightBrace {
+        if self.get_token_and_move() != &Token::RightBrace {
             panic!("Expected }}, but found {}", self.current_token())
         }
 
@@ -148,10 +150,18 @@ impl Parser {
     fn handle_operator(&mut self, left: Expr) -> Expr {
         //TODO extend
         match self.current_token() {
+            //Math
             Token::Plus => self.parse_binary_expr(left, Binding::Add),
             Token::Minus => self.parse_binary_expr(left, Binding::Add),
             Token::Star => self.parse_binary_expr(left, Binding::Mult),
             Token::Slash => self.parse_binary_expr(left, Binding::Mult),
+            //Relation
+            Token::NotEqual => self.parse_binary_expr(left, Binding::Relation),
+            Token::Equal => self.parse_binary_expr(left, Binding::Relation),
+            Token::Greater => self.parse_binary_expr(left, Binding::Relation),
+            Token::GreaterEqual => self.parse_binary_expr(left, Binding::Relation),
+            Token::Less => self.parse_binary_expr(left, Binding::Relation),
+            Token::LessEqual => self.parse_binary_expr(left, Binding::Relation),
             _ => panic!("No handler found for operator token {}", self.current_token())
         }
     }
