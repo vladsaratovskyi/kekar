@@ -1,7 +1,7 @@
 use std::fmt::{self, Display};
 use std::fs::{self};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Single-character tokens.
     LeftParen, RightParen, LeftBrace, RightBrace,
@@ -14,7 +14,7 @@ pub enum Token {
     Less, LessEqual,
 
     // Literals.
-    Identifier, String(String), Number(i32),
+    Identifier(String), String(String), Number(f64),
 
     // Keywords.
     And, Class, Else, False, Fun, For, If, None, Or,
@@ -51,7 +51,7 @@ fn get_keyword(key: &str) -> Option<Token> {
         "gt" => Some(Token::Greater),
         "le" => Some(Token::LessEqual),
         "lt" => Some(Token::Less),
-        _ => None
+        s => Some(Token::Identifier(s.to_string()))
     }
 }
 
@@ -68,7 +68,7 @@ fn is_letter(char: char) -> bool {
 pub struct Lexer {
     current: usize,
     start: usize,
-    line: i32,
+    line: usize,
     source: String
 }
 
@@ -114,8 +114,8 @@ impl Lexer {
         self.source[self.start..self.current].to_string()
     }
     
-    fn get_int_value(&self) -> i32 {
-        self.source[self.start..self.current].parse::<i32>().unwrap()
+    fn get_num_value(&self) -> f64 {
+        self.source[self.start..self.current].parse::<f64>().unwrap()
     }
 
     fn parse_string(&mut self) -> Option<Token> {
@@ -140,7 +140,7 @@ impl Lexer {
             while is_num(self.peek_char()) { self.move_next(); continue; }
         }
 
-        Some(Token::Number(self.get_int_value()))
+        Some(Token::Number(self.get_num_value()))
     }
 
     fn parse_word(&mut self) -> Option<Token> {

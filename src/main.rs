@@ -1,8 +1,10 @@
 use std::env;
 mod lexer;
 mod parser;
+mod ast;
 
 use lexer::Lexer;
+use parser::Parser;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -15,6 +17,9 @@ fn main() {
     let mut lexer = Lexer::new(&args[1]);
 
     let tokens = lexer.lex_file();
+    
+    let mut parser = Parser::new(tokens);
+    let ast = parser.parse();
 
-    dbg!(tokens);
+    dbg!(ast);
 }
