@@ -50,6 +50,7 @@ impl Parser {
 
     fn get_token_and_move(&mut self) -> &Token {
         let token = &self.tokens[self.current];
+        println!("curr token {}", self.current_token());
         self.current += 1;
         token
     }
@@ -84,8 +85,6 @@ impl Parser {
             Some(l) => l,
             None => Expr::Semicolon
         };
-
-        println!("curr token {}", self.current_token());
 
         while self.get_current_token_power() > binding {
             left = self.handle_operator(left);
@@ -130,9 +129,20 @@ impl Parser {
 
     fn parse_prefix(&mut self) -> Expr{
         let operator = self.get_token_and_move();
-
-        println!("curr token {}", operator);
         Expr::Unary(operator.clone(), Box::new(self.parse_expr(Binding::Unary)))
+    }
+
+    fn parse_var(&mut self) -> Stmt {
+        let declaratio = self.get_token_and_move();
+        let name = self.get_token_and_move();
+        let assignment = self.get_token_and_move();
+        let assignment_value = self.parse_expr(Binding::Assign);
+
+        if self.get_token_and_move() != &Token::Semicolon {
+            panic!("Expected semicolon, but {}", self.current_token())
+        }
+
+        Stmt::Var(ExprStmt { expr: assignment_value })
     }
 
     fn handle_literal(&mut self) -> Option<Expr> {
@@ -153,6 +163,7 @@ impl Parser {
         //TODO extend
         match self.current_token() {
             Token::LeftBrace => Some(self.parse_block_stmt()),
+            Token::Var => Some(self.parse_var()),
             _ => None
         }
     }
