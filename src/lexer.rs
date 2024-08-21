@@ -6,6 +6,7 @@ pub enum Token {
     // Single-character tokens.
     LeftParen, RightParen, LeftBrace, RightBrace,
     Coma, Dot, Minus, Plus, Semicolon, Slash, Star,
+    Not,
 
     // One or two character tokens.
     Bang, NotEqual,

@@ -102,7 +102,6 @@ impl Parser {
         let mut body = Vec::new();
 
         while self.has_tokens() && self.current_token() != &Token::RightBrace {
-            println!("curr token {}", self.current_token());
             self.get_token_and_move();
             body.push(self.parse_stmt());
         }
@@ -123,9 +122,17 @@ impl Parser {
         }
     }
 
-    fn parse_binary_expr(&mut self, left: Expr, binding: Binding) -> Expr {
+    fn parse_binary_expr(&mut self, left: Expr) -> Expr {
+        let binding = self.get_current_token_power();
         let operator = self.get_token_and_move().clone();
         Expr::Binary(Box::new(left), operator, Box::new(self.parse_expr(binding)))
+    }
+
+    fn parse_prefix(&mut self) -> Expr{
+        let operator = self.get_token_and_move();
+
+        println!("curr token {}", operator);
+        Expr::Unary(operator.clone(), Box::new(self.parse_expr(Binding::Unary)))
     }
 
     fn handle_literal(&mut self) -> Option<Expr> {
@@ -134,6 +141,9 @@ impl Parser {
             Token::Number(_) => Some(self.parse_primary_expr()),
             Token::String(_) => Some(self.parse_primary_expr()),
             Token::Identifier(_) => Some(self.parse_primary_expr()),
+            //Unary
+            Token::Minus => Some(self.parse_prefix()),
+            Token::Not => Some(self.parse_prefix()),
             Token::Semicolon => None,
             _ => panic!("No handler found for literal token {}", self.current_token())
         }
@@ -151,17 +161,22 @@ impl Parser {
         //TODO extend
         match self.current_token() {
             //Math
-            Token::Plus => self.parse_binary_expr(left, Binding::Add),
-            Token::Minus => self.parse_binary_expr(left, Binding::Add),
-            Token::Star => self.parse_binary_expr(left, Binding::Mult),
-            Token::Slash => self.parse_binary_expr(left, Binding::Mult),
+            Token::Plus => self.parse_binary_expr(left),
+            Token::Minus => self.parse_binary_expr(left),
+            Token::Star => self.parse_binary_expr(left),
+            Token::Slash => self.parse_binary_expr(left),
             //Relation
-            Token::NotEqual => self.parse_binary_expr(left, Binding::Relation),
-            Token::Equal => self.parse_binary_expr(left, Binding::Relation),
-            Token::Greater => self.parse_binary_expr(left, Binding::Relation),
-            Token::GreaterEqual => self.parse_binary_expr(left, Binding::Relation),
-            Token::Less => self.parse_binary_expr(left, Binding::Relation),
-            Token::LessEqual => self.parse_binary_expr(left, Binding::Relation),
+            Token::NotEqual => self.parse_binary_expr(left),
+            Token::EqualEqual => self.parse_binary_expr(left),
+            Token::Greater => self.parse_binary_expr(left),
+            Token::GreaterEqual => self.parse_binary_expr(left),
+            Token::Less => self.parse_binary_expr(left),
+            Token::LessEqual => self.parse_binary_expr(left),
+            //Logical
+            Token::And => self.parse_binary_expr(left),
+            Token::Or => self.parse_binary_expr(left),
+            //Assignment
+            Token::Equal => self.parse_binary_expr(left),
             _ => panic!("No handler found for operator token {}", self.current_token())
         }
     }
@@ -176,6 +191,15 @@ impl Parser {
             Token::Minus => Binding::Add,
             Token::Star => Binding::Mult,
             Token::Slash => Binding::Mult,
+            Token::NotEqual => Binding::Relation,
+            Token::EqualEqual => Binding::Relation,
+            Token::Greater => Binding::Relation,
+            Token::GreaterEqual => Binding::Relation,
+            Token::Less => Binding::Relation,
+            Token::LessEqual => Binding::Relation,
+            Token::And => Binding::Logic,
+            Token::Or => Binding::Logic,
+            Token::Equal => Binding::Assign,
             _ => Binding::Def
         }
     }
