@@ -61,14 +61,14 @@ impl Parser {
         self.current < self.tokens.len() && self.tokens[self.current] != Token::Eof
     }
 
-    fn expect(&mut self, expected: &Token) -> Result<&Token, ParseError> {
+    fn expect(&mut self, expected: &Token) -> &Token {
         let current = self.current_token();
         
         if std::mem::discriminant(current) != std::mem::discriminant(expected) {
             panic!("Expected {} but found {}", expected, current);
         }
 
-        return Ok(self.get_token_and_move());
+        return self.get_token_and_move();
     }
 
     fn parse_stmt(&mut self) -> Stmt {
@@ -85,9 +85,7 @@ impl Parser {
     fn parse_exrp_stmt(&mut self) -> Stmt {
         let expr = self.parse_expr(Binding::Def);
 
-        if self.get_token_and_move() != &Token::Semicolon {
-            panic!("Expected semicolon, but {}", self.current_token())
-        }
+        self.expect(&Token::Semicolon);
 
         Stmt::Expr(ExprStmt { expr })
     }
@@ -106,20 +104,15 @@ impl Parser {
     }
 
     fn parse_block_stmt(&mut self) -> Stmt {
-        if self.current_token() != &Token::LeftBrace {
-            panic!("Expected {{, but found {}", self.current_token())
-        }
+        self.expect(&Token::LeftBrace);
 
         let mut body = Vec::new();
 
         while self.has_tokens() && self.current_token() != &Token::RightBrace {
-            self.get_token_and_move();
             body.push(self.parse_stmt());
         }
 
-        if self.get_token_and_move() != &Token::RightBrace {
-            panic!("Expected }}, but found {}", self.current_token())
-        }
+        self.expect(&Token::RightBrace);
 
         Stmt::Block(BlockStmt { stmts: body })
     }
@@ -147,18 +140,16 @@ impl Parser {
     }
 
     fn parse_var(&mut self) -> Stmt {
-        let declaratio = self.get_token_and_move();
-        let name = match self.get_token_and_move() {
+        self.expect(&Token::Var);
+        let name = match self.expect(&Token::Identifier("any".to_string())) {
             Token::Identifier(s) => s.to_string(),
             _ => panic!("Token has no value")
         };
 
-        let assignment = self.get_token_and_move();
+        self.expect(&Token::Equal);
         let assignment_value = self.parse_expr(Binding::Assign);
 
-        if self.get_token_and_move() != &Token::Semicolon {
-            panic!("Expected semicolon, but {}", self.current_token())
-        }
+        self.expect(&Token::Semicolon);
 
         Stmt::Var(VarStmt{ name: name, assignment: assignment_value })
     }
@@ -196,23 +187,17 @@ impl Parser {
         //initialize with some values
         let mut for_stmt = ForStmt { item : "any".to_string(), use_index: false, iterator: Expr::Empty, body: BlockStmt { stmts: Vec::new() } };
         
-        let item_name = match self.expect(&Token::Identifier("any".to_string())) {
-            Ok(t) => match t {
-                Token::Identifier(s) => s,
-                _ => panic!("Incorrect type of token")
-            },
-            Err(e) => panic!("Error occured! {}", e)
-        };
+        let item_name = self.expect(&Token::Identifier("any".to_string()));
         
         for_stmt.item = item_name.to_string();
 
         if self.current_token() == &Token::Coma {
-            self.expect(&Token::Coma).unwrap();
-            self.expect(&Token::Identifier("any".to_string())).unwrap();
+            self.expect(&Token::Coma);
+            self.expect(&Token::Identifier("any".to_string()));
             for_stmt.use_index = true;
         }
         
-        self.expect(&Token::In).unwrap();
+        self.expect(&Token::In);
         let iterator = self.parse_expr(Binding::Def);
         for_stmt.iterator = iterator;
         
