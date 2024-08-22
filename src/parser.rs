@@ -259,7 +259,7 @@ impl Parser {
             Token::Identifier(_) => Some(self.parse_primary_expr()),
             //Unary
             Token::Minus => Some(self.parse_prefix_expr()),
-            Token::Bang => Some(self.parse_prefix_expr()),
+            Token::Not => Some(self.parse_prefix_expr()),
             Token::Semicolon => None,
             _ => panic!("No handler found for literal token {}", self.current_token())
         }
@@ -329,7 +329,7 @@ impl Parser {
             Token::LessEqual => Binding::Relation,
             Token::And => Binding::Logic,
             Token::Or => Binding::Logic,
-            Token::Bang => Binding::Unary,
+            Token::Not => Binding::Unary,
             Token::Equal => Binding::Assign,
             Token::PlusEqual => Binding::Assign,
             Token::MinusEqual => Binding::Assign,

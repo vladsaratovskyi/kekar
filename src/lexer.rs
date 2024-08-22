@@ -9,7 +9,7 @@ pub enum Token {
     Percent, PlusEqual, MinusEqual, Colon,
 
     // One or two character tokens.
-    Bang, NotEqual,
+    Not, NotEqual,
     Equal, EqualEqual,
     Greater, GreaterEqual,
     Less, LessEqual,
@@ -187,7 +187,7 @@ impl Lexer {
                 if second {
                     Some(Token::NotEqual)
                 } else {
-                    Some(Token::Bang)
+                    Some(Token::Not)
                 }
             },
             '=' => {

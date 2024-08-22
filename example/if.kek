@@ -1,7 +1,7 @@
 {
     if true {
         var a = 0;
-    } else {
+    } else if !false {
         var a = 1;
     }
 }
