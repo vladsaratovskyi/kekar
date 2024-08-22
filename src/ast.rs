@@ -20,21 +20,9 @@ pub enum Stmt {
     Empty
 }
 
-impl Expr {
-    fn expr(&self) {
-
-    }
-}
-
 #[derive(Debug, PartialEq)]
 pub struct BlockStmt {
     pub stmts: Vec<Stmt>
-}
-
-impl BlockStmt {
-    fn stmt(&self) {
-
-    }
 }
 
 #[derive(Debug, PartialEq)]
