@@ -6,7 +6,7 @@ pub enum Token {
     // Single-character tokens.
     LeftParen, RightParen, LeftBrace, RightBrace,
     Coma, Dot, Minus, Plus, Semicolon, Slash, Star,
-    Not,
+    Percent, PlusEqual, MinusEqual,
 
     // One or two character tokens.
     Bang, NotEqual,
@@ -19,7 +19,7 @@ pub enum Token {
 
     // Keywords.
     And, Class, Else, False, Fun, For, If, None, Or,
-    Print, Return, Super, This, True, Var, While,
+    Print, Return, Super, This, True, Var, While, Import,
 
     Eof
 }
@@ -52,6 +52,7 @@ fn get_keyword(key: &str) -> Option<Token> {
         "gt" => Some(Token::Greater),
         "le" => Some(Token::LessEqual),
         "lt" => Some(Token::Less),
+        "import" => Some(Token::Import),
         s => Some(Token::Identifier(s.to_string()))
     }
 }
@@ -160,21 +161,36 @@ impl Lexer {
             '}' => Some(Token::RightBrace),
             ',' => Some(Token::Coma),
             '.' => Some(Token::Dot),
-            '-' => Some(Token::Minus),
-            '+' => Some(Token::Plus),
+            '-' => {
+                let second = self.check_second_char('=');
+                if second {
+                    Some(Token::MinusEqual)
+                } else {
+                    Some(Token::Minus)
+                }
+            },
+            '+' => {
+                let second = self.check_second_char('=');
+                if second {
+                    Some(Token::PlusEqual)
+                } else {
+                    Some(Token::Plus)
+                }
+            },
             ';' => Some(Token::Semicolon),
             '*' => Some(Token::Star),
+            '%' => Some(Token::Percent),
             '!' => {
-                let res = self.check_second_char('=');
-                if res {
+                let second = self.check_second_char('=');
+                if second {
                     Some(Token::NotEqual)
                 } else {
                     Some(Token::Bang)
                 }
             },
             '=' => {
-                let res = self.check_second_char('=');
-                if res {
+                let second = self.check_second_char('=');
+                if second {
                     Some(Token::EqualEqual)
                 } else {
                     Some(Token::Equal)

@@ -115,6 +115,8 @@ impl Parser {
     fn parse_primary_expr(&mut self) -> Expr {
         match self.get_token_and_move() {
             Token::Number(n) => Expr::Literal(Literal::Num(*n)),
+            Token::True => Expr::Literal(Literal::Bool(true)),
+            Token::False => Expr::Literal(Literal::Bool(false)),
             Token::String(s) => Expr::Literal(Literal::String(s.to_string())),
             Token::Identifier(i) => Expr::Literal(Literal::Identifier(i.to_string())),
             _ => panic!("No expression found for literal token {}", self.current_token())
@@ -145,15 +147,46 @@ impl Parser {
         Stmt::Var(ExprStmt { expr: assignment_value })
     }
 
+    fn parse_assignment(&mut self, left: Expr) -> Expr {
+        let binding = self.get_current_token_power();
+        self.get_token_and_move();
+
+        let right = self.parse_expr(binding);
+
+        Expr::Assignment(Box::new(left), Box::new(right))
+    }
+
+    fn parse_if(&self) -> Stmt {
+        Stmt::Empty(EmptyStmt {  })
+    }
+
+    fn parse_for(&self) -> Stmt {
+        Stmt::Empty(EmptyStmt {  })
+    }
+
+    fn parse_fun(&self) -> Stmt {
+        Stmt::Empty(EmptyStmt {  })
+    }
+
+    fn parse_class(&self) -> Stmt {
+        Stmt::Empty(EmptyStmt {  })
+    }
+
+    fn parse_import(&self) -> Stmt {
+        Stmt::Empty(EmptyStmt {  })
+    }
+
     fn handle_literal(&mut self) -> Option<Expr> {
         //TODO extend
         match self.current_token() {
             Token::Number(_) => Some(self.parse_primary_expr()),
             Token::String(_) => Some(self.parse_primary_expr()),
+            Token::True => Some(self.parse_primary_expr()),
+            Token::False => Some(self.parse_primary_expr()),
             Token::Identifier(_) => Some(self.parse_primary_expr()),
             //Unary
             Token::Minus => Some(self.parse_prefix()),
-            Token::Not => Some(self.parse_prefix()),
+            Token::Bang => Some(self.parse_prefix()),
             Token::Semicolon => None,
             _ => panic!("No handler found for literal token {}", self.current_token())
         }
@@ -164,6 +197,11 @@ impl Parser {
         match self.current_token() {
             Token::LeftBrace => Some(self.parse_block_stmt()),
             Token::Var => Some(self.parse_var()),
+            Token::If => Some(self.parse_if()),
+            Token::For => Some(self.parse_for()),
+            Token::Fun => Some(self.parse_fun()),
+            Token::Class => Some(self.parse_class()),
+            Token::Import => Some(self.parse_import()),
             _ => None
         }
     }
@@ -176,6 +214,7 @@ impl Parser {
             Token::Minus => self.parse_binary_expr(left),
             Token::Star => self.parse_binary_expr(left),
             Token::Slash => self.parse_binary_expr(left),
+            Token::Percent => self.parse_binary_expr(left),
             //Relation
             Token::NotEqual => self.parse_binary_expr(left),
             Token::EqualEqual => self.parse_binary_expr(left),
@@ -187,7 +226,9 @@ impl Parser {
             Token::And => self.parse_binary_expr(left),
             Token::Or => self.parse_binary_expr(left),
             //Assignment
-            Token::Equal => self.parse_binary_expr(left),
+            Token::Equal => self.parse_assignment(left),
+            Token::PlusEqual => self.parse_assignment(left),
+            Token::MinusEqual => self.parse_assignment(left),
             _ => panic!("No handler found for operator token {}", self.current_token())
         }
     }
@@ -202,6 +243,7 @@ impl Parser {
             Token::Minus => Binding::Add,
             Token::Star => Binding::Mult,
             Token::Slash => Binding::Mult,
+            Token::Percent => Binding::Mult,
             Token::NotEqual => Binding::Relation,
             Token::EqualEqual => Binding::Relation,
             Token::Greater => Binding::Relation,
@@ -210,7 +252,10 @@ impl Parser {
             Token::LessEqual => Binding::Relation,
             Token::And => Binding::Logic,
             Token::Or => Binding::Logic,
+            Token::Bang => Binding::Unary,
             Token::Equal => Binding::Assign,
+            Token::PlusEqual => Binding::Assign,
+            Token::MinusEqual => Binding::Assign,
             _ => Binding::Def
         }
     }
