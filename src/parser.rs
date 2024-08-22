@@ -136,7 +136,11 @@ impl Parser {
 
     fn parse_var(&mut self) -> Stmt {
         let declaratio = self.get_token_and_move();
-        let name = self.get_token_and_move();
+        let name = match self.get_token_and_move() {
+            Token::Identifier(s) => s.to_string(),
+            _ => panic!("Token has no value")
+        };
+
         let assignment = self.get_token_and_move();
         let assignment_value = self.parse_expr(Binding::Assign);
 
@@ -144,7 +148,7 @@ impl Parser {
             panic!("Expected semicolon, but {}", self.current_token())
         }
 
-        Stmt::Var(ExprStmt { expr: assignment_value })
+        Stmt::Var(Token::Identifier(name), ExprStmt { expr: assignment_value })
     }
 
     fn parse_assignment(&mut self, left: Expr) -> Expr {

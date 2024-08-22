@@ -16,7 +16,7 @@ pub enum Expr {
 pub enum Stmt {
     Block(BlockStmt),
     Expr(ExprStmt),
-    Var(ExprStmt),
+    Var(Token, ExprStmt),
     Empty(EmptyStmt),
 }
 
