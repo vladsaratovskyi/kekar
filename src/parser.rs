@@ -50,7 +50,6 @@ impl Parser {
 
     fn get_token_and_move(&mut self) -> &Token {
         let token = &self.tokens[self.current];
-        println!("curr token {}", self.current_token());
         self.current += 1;
         token
     }
