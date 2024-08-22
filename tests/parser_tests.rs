@@ -2,8 +2,8 @@
 mod tests {
     use kekar::{
         ast::{
-            BlockStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt, Type,
-            VarStmt,
+            BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt,
+            Type, VarStmt,
         },
         lexer::Token,
         parser::Parser,
@@ -276,6 +276,76 @@ mod tests {
                     ),
                     var_type: Type::None,
                 })],
+            },
+        })];
+
+        let expected = BlockStmt { stmts };
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_class() {
+        let tokens = vec![
+            Token::Class,
+            Token::Identifier("Animal".to_string()),
+            Token::LeftBrace,
+            Token::Var,
+            Token::Identifier("name".to_string()),
+            Token::Colon,
+            Token::Identifier("String".to_string()),
+            Token::Semicolon,
+            Token::Var,
+            Token::Identifier("age".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::Semicolon,
+            Token::Fun,
+            Token::Identifier("live".to_string()),
+            Token::LeftParen,
+            Token::RightParen,
+            Token::Colon,
+            Token::Identifier("String".to_string()),
+            Token::LeftBrace,
+            Token::Identifier("name".to_string()),
+            Token::Equal,
+            Token::String("Living".to_string()),
+            Token::Semicolon,
+            Token::RightBrace,
+            Token::RightBrace,
+        ];
+
+        let mut parser = Parser::new(tokens);
+
+        let result = parser.parse();
+
+        let stmts = vec![Stmt::Class(ClassStmt {
+            name: "Animal".to_string(),
+            block: BlockStmt {
+                stmts: vec![
+                    Stmt::Var(VarStmt {
+                        name: "name".to_string(),
+                        assignment: Expr::Empty,
+                        var_type: Type::String,
+                    }),
+                    Stmt::Var(VarStmt {
+                        name: "age".to_string(),
+                        assignment: Expr::Empty,
+                        var_type: Type::Num,
+                    }),
+                    Stmt::Fun(FunStmt {
+                        name: "live".to_string(),
+                        return_type: Type::String,
+                        params: vec![],
+                        block: BlockStmt {
+                            stmts: vec![Stmt::Expr(ExprStmt {
+                                expr: Expr::Assignment(
+                                    Box::new(Expr::Literal(Literal::Identifier("name".to_string()))),
+                                    Box::new(Expr::Literal(Literal::String("Living".to_string()))),
+                                ),
+                            })],
+                        },
+                    }),
+                ],
             },
         })];
 

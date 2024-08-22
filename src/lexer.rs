@@ -64,7 +64,7 @@ fn is_num(char: char) -> bool {
 }
 
 fn is_letter(char: char) -> bool {
-    let nums = "abcdefghijklmnopqrstuvwxyz_";
+    let nums = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_";
     nums.contains(char)
 }
 

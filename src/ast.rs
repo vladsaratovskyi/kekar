@@ -17,6 +17,8 @@ pub enum Stmt {
     If(IfStmt),
     For(ForStmt),
     Fun(FunStmt),
+    Class(ClassStmt),
+    Return(ReturnStmt),
     Empty
 }
 
@@ -57,6 +59,18 @@ pub struct FunStmt {
     pub name: String,
     pub return_type: Type,
     pub params: Vec<Param>,
+    pub block: BlockStmt,
+    //pub ret: ReturnStmt
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ReturnStmt {
+    pub return_expr: Expr
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ClassStmt {
+    pub name: String,
     pub block: BlockStmt
 }
 

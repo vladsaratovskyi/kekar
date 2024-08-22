@@ -2,7 +2,7 @@ use core::panic;
 use std::string::ParseError;
 
 use crate::lexer::Token;
-use crate::ast::{BlockStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt, Type, VarStmt};
+use crate::ast::{BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt, Type, VarStmt};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum Binding {
@@ -50,6 +50,7 @@ impl Parser {
 
     fn get_token_and_move(&mut self) -> &Token {
         let token = &self.tokens[self.current];
+        println!("{}", token);
         self.current += 1;
         token
     }
@@ -140,13 +141,22 @@ impl Parser {
     fn parse_var_stmt(&mut self) -> Stmt {
         self.expect(&Token::Var);
         let name = self.expect_identifier_get_name();
+        let mut field_type = Type::None;
 
-        self.expect(&Token::Equal);
-        let assignment = self.parse_expr(Binding::Assign);
+        if self.current_token() == &Token::Colon {
+            self.expect(&Token::Colon);
+            field_type = parse_type(&self.expect_identifier_get_name());
+        }
+
+        let mut assignment = Expr::Empty;
+        if self.current_token() != &Token::Semicolon {
+            self.expect(&Token::Equal);
+            assignment = self.parse_expr(Binding::Assign);
+        }
 
         self.expect(&Token::Semicolon);
 
-        Stmt::Var(VarStmt{ name, assignment, var_type: Type::None })
+        Stmt::Var(VarStmt{ name, assignment, var_type: field_type })
     }
 
     fn parse_assignment_exrp(&mut self, left: Expr) -> Expr {
@@ -240,8 +250,15 @@ impl Parser {
         Expr::Empty
     }
 
-    fn parse_class_stmt(&self) -> Stmt {
-        Stmt::Empty
+    fn parse_class_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Class);
+        let class_name = self.expect_identifier_get_name();
+        let block = match self.parse_block_stmt() {
+            Stmt::Block(b) => b,
+            _ => panic!("Incorrect type of block statement!")
+        };
+
+        Stmt::Class(ClassStmt { name: class_name, block })
     }
 
     fn parse_import_stmt(&self) -> Stmt {
@@ -340,9 +357,9 @@ impl Parser {
 
 fn parse_type(type_name: &str) -> Type {
     match type_name {
-        "num" => Type::Num,
-        "String" => Type::String,
-        "bool" => Type::Bool,
+        "num" | "Num" => Type::Num,
+        "string" | "String" => Type::String,
+        "bool" | "Bool" => Type::Bool,
         "" => Type::None,
         s => Type::Identifier(s.to_string()),
     }
