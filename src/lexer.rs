@@ -254,10 +254,7 @@ impl Lexer {
         while !self.is_end() {
             self.start = self.current;
             let token = self.scan_token();
-            match token {
-                Some(t) => tokens.push(t),
-                None => ()
-            }
+            if let Some(t) = token { tokens.push(t) }
         }
     
         tokens.push(Token::Eof);

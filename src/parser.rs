@@ -1,6 +1,4 @@
 use core::panic;
-use std::fmt::Error;
-use std::net::ToSocketAddrs;
 use std::string::ParseError;
 
 use crate::lexer::Token;
@@ -74,12 +72,12 @@ impl Parser {
     fn parse_stmt(&mut self) -> Stmt {
         let stmt = self.handle_stmt();
 
-        let res = match stmt {
+        
+
+        match stmt {
             Some(s) => s,
             None => self.parse_exrp_stmt()
-        };
-
-        res
+        }
     }
 
     fn parse_exrp_stmt(&mut self) -> Stmt {
@@ -147,11 +145,11 @@ impl Parser {
         };
 
         self.expect(&Token::Equal);
-        let assignment_value = self.parse_expr(Binding::Assign);
+        let assignment = self.parse_expr(Binding::Assign);
 
         self.expect(&Token::Semicolon);
 
-        Stmt::Var(VarStmt{ name: name, assignment: assignment_value, var_type: Type::None })
+        Stmt::Var(VarStmt{ name, assignment, var_type: Type::None })
     }
 
     fn parse_assignment_exrp(&mut self, left: Expr) -> Expr {

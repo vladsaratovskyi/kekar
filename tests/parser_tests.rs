@@ -1,6 +1,6 @@
 #[cfg(test)]mod tests {
     use kakar::{ast::{BlockStmt, Expr, ExprStmt, Literal, Stmt, Type, VarStmt}, lexer::Token, parser::Parser};
-    use super::*;
+    
 
     #[test]
     fn parse_addition() {
@@ -25,13 +25,13 @@
                 }
             )
         );
-        let expected = BlockStmt { stmts : stmts };
+        let expected = BlockStmt { stmts };
 
         assert_eq!(result, expected);
     }
 
     #[test]
-    fn parse__var_with_addition() {
+    fn parse_var_with_addition() {
         let mut tokens = Vec::new();
         tokens.push(Token::Var);
         tokens.push(Token::Identifier("a".to_string()));
@@ -61,7 +61,7 @@
                 }
             )
         );
-        let expected = BlockStmt { stmts : stmts };
+        let expected = BlockStmt { stmts };
 
        assert_eq!(result, expected);
     }
