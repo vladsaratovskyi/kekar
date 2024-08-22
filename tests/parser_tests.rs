@@ -1,5 +1,5 @@
 #[cfg(test)]mod tests {
-    use kakar::{ast::{BlockStmt, Expr, ExprStmt, Literal, Stmt, VarStmt}, lexer::Token, parser::Parser};
+    use kakar::{ast::{BlockStmt, Expr, ExprStmt, Literal, Stmt, Type, VarStmt}, lexer::Token, parser::Parser};
     use super::*;
 
     #[test]
@@ -51,6 +51,7 @@
         stmts.push(
             Stmt::Var(
                 VarStmt {
+                    var_type: Type::None,
                     name : "a".to_string(),
                     assignment: Expr::Binary(Box::new(
                         Expr::Literal(Literal::Num(1.0))),

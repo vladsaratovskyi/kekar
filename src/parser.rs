@@ -4,7 +4,7 @@ use std::net::ToSocketAddrs;
 use std::string::ParseError;
 
 use crate::lexer::Token;
-use crate::ast::{BlockStmt, EmptyStmt, Expr, ExprStmt, ForStmt, IfStmt, Literal, Stmt, VarStmt};
+use crate::ast::{BlockStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt, Type, VarStmt};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum Binding {
@@ -134,12 +134,12 @@ impl Parser {
         Expr::Binary(Box::new(left), operator, Box::new(self.parse_expr(binding)))
     }
 
-    fn parse_prefix(&mut self) -> Expr{
+    fn parse_prefix_expr(&mut self) -> Expr{
         let operator = self.get_token_and_move();
         Expr::Unary(operator.clone(), Box::new(self.parse_expr(Binding::Unary)))
     }
 
-    fn parse_var(&mut self) -> Stmt {
+    fn parse_var_stmt(&mut self) -> Stmt {
         self.expect(&Token::Var);
         let name = match self.expect(&Token::Identifier("any".to_string())) {
             Token::Identifier(s) => s.to_string(),
@@ -151,10 +151,10 @@ impl Parser {
 
         self.expect(&Token::Semicolon);
 
-        Stmt::Var(VarStmt{ name: name, assignment: assignment_value })
+        Stmt::Var(VarStmt{ name: name, assignment: assignment_value, var_type: Type::None })
     }
 
-    fn parse_assignment(&mut self, left: Expr) -> Expr {
+    fn parse_assignment_exrp(&mut self, left: Expr) -> Expr {
         let binding = self.get_current_token_power();
         self.get_token_and_move();
 
@@ -168,7 +168,7 @@ impl Parser {
         let condition = self.parse_expr(Binding::Assign);
         let main = self.parse_block_stmt();
 
-        let mut alter = Stmt::Empty(EmptyStmt {  });
+        let mut alter = Stmt::Empty;
         if self.current_token() == &Token::Else {
             self.get_token_and_move();
 
@@ -182,7 +182,7 @@ impl Parser {
         Stmt::If(IfStmt { condition, main: Box::new(main), alter: Box::new(alter) })
     }
 
-    fn parse_for(&mut self) -> Stmt {
+    fn parse_for_stmt(&mut self) -> Stmt {
         self.get_token_and_move();
         //initialize with some values
         let mut for_stmt = ForStmt { item : "any".to_string(), use_index: false, iterator: Expr::Empty, body: BlockStmt { stmts: Vec::new() } };
@@ -210,16 +210,66 @@ impl Parser {
         Stmt::For(for_stmt)
     }
 
-    fn parse_fun(&self) -> Stmt {
-        Stmt::Empty(EmptyStmt {  })
+    fn parse_fun_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Fun);
+        let fun_name = match self.expect(&Token::Identifier("any".to_string())) {
+            Token::Identifier(s) => s.to_string(),
+            _ => panic!("Token has no value")
+        };
+
+        let mut params = Vec::new();
+        self.expect(&Token::LeftParen);
+
+        while self.has_tokens() && self.current_token() != &Token::RightParen {
+            let mut param = Param { name: "".to_string(), param_type: Type::None}; 
+            let param_type = match self.expect(&Token::Identifier("any".to_string())) {
+                Token::Identifier(s) => s,
+                _ => panic!("param has invalid type")
+            };
+            param.param_type = parse_type(param_type);
+            let param_name = match self.expect(&Token::Identifier("any".to_string())) {
+                Token::Identifier(s) => s.to_string(),
+                _ => panic!("param has invalid name")
+            };
+            param.name = param_name;
+
+            params.push(param);
+
+            if !matches!(self.current_token(), &Token::RightParen | &Token::Eof) {
+                self.expect(&Token::Coma);
+            }
+        }
+
+        self.expect(&Token::RightParen);
+        self.expect(&Token::Colon);
+
+        let fun_type = match self.expect(&Token::Identifier("any".to_string())) {
+            Token::Identifier(s) => parse_type(s),
+            _ => panic!("fn {} has invalid type", fun_name)
+        };
+
+        let block = match self.parse_block_stmt() {
+            Stmt::Block(b) => b,
+            _ => panic!("Incorrect type of block statement!")
+        };
+
+        Stmt::Fun(FunStmt { name: fun_name, return_type: fun_type, params, block })
     }
 
-    fn parse_class(&self) -> Stmt {
-        Stmt::Empty(EmptyStmt {  })
+    fn parse_fun_call_expr(&self) -> Expr {
+        Expr::Empty
     }
 
-    fn parse_import(&self) -> Stmt {
-        Stmt::Empty(EmptyStmt {  })
+    fn parser_member_exrp(&self) -> Expr {
+        Expr::Empty
+    }
+
+    fn parse_class_stmt(&self) -> Stmt {
+        Stmt::Empty
+    }
+
+    fn parse_import_stmt(&self) -> Stmt {
+        Stmt::Empty
     }
 
     fn handle_literal(&mut self) -> Option<Expr> {
@@ -231,8 +281,8 @@ impl Parser {
             Token::False => Some(self.parse_primary_expr()),
             Token::Identifier(_) => Some(self.parse_primary_expr()),
             //Unary
-            Token::Minus => Some(self.parse_prefix()),
-            Token::Bang => Some(self.parse_prefix()),
+            Token::Minus => Some(self.parse_prefix_expr()),
+            Token::Bang => Some(self.parse_prefix_expr()),
             Token::Semicolon => None,
             _ => panic!("No handler found for literal token {}", self.current_token())
         }
@@ -242,12 +292,12 @@ impl Parser {
         //TODO extend
         match self.current_token() {
             Token::LeftBrace => Some(self.parse_block_stmt()),
-            Token::Var => Some(self.parse_var()),
+            Token::Var => Some(self.parse_var_stmt()),
             Token::If => Some(self.parse_if_stmt()),
-            Token::For => Some(self.parse_for()),
-            Token::Fun => Some(self.parse_fun()),
-            Token::Class => Some(self.parse_class()),
-            Token::Import => Some(self.parse_import()),
+            Token::For => Some(self.parse_for_stmt()),
+            Token::Fun => Some(self.parse_fun_stmt()),
+            Token::Class => Some(self.parse_class_stmt()),
+            Token::Import => Some(self.parse_import_stmt()),
             _ => None
         }
     }
@@ -272,9 +322,13 @@ impl Parser {
             Token::And => self.parse_binary_expr(left),
             Token::Or => self.parse_binary_expr(left),
             //Assignment
-            Token::Equal => self.parse_assignment(left),
-            Token::PlusEqual => self.parse_assignment(left),
-            Token::MinusEqual => self.parse_assignment(left),
+            Token::Equal => self.parse_assignment_exrp(left),
+            Token::PlusEqual => self.parse_assignment_exrp(left),
+            Token::MinusEqual => self.parse_assignment_exrp(left),
+            //Call, Member
+            Token::LeftParen => self.parse_fun_call_expr(),
+            Token::LeftBrace => self.parser_member_exrp(),
+            Token::Dot => self.parser_member_exrp(),
             _ => panic!("No handler found for operator token {}", self.current_token())
         }
     }
@@ -306,4 +360,14 @@ impl Parser {
         }
     }
 
+}
+
+fn parse_type(type_name: &str) -> Type {
+    match type_name {
+        "num" => Type::Num,
+        "String" => Type::String,
+        "bool" => Type::Bool,
+        "" => Type::None,
+        s => Type::Identifier(s.to_string()),
+    }
 }

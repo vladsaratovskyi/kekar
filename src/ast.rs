@@ -14,9 +14,10 @@ pub enum Stmt {
     Block(BlockStmt),
     Expr(ExprStmt),
     Var(VarStmt),
-    Empty(EmptyStmt),
     If(IfStmt),
     For(ForStmt),
+    Fun(FunStmt),
+    Empty
 }
 
 impl Expr {
@@ -45,7 +46,7 @@ pub struct ExprStmt {
 pub struct VarStmt {
     pub name: String,
     pub assignment: Expr,
-    //type: Type
+    pub var_type: Type
 }
 
 #[derive(Debug, PartialEq)]
@@ -64,8 +65,12 @@ pub struct ForStmt {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct EmptyStmt {}
-
+pub struct FunStmt {
+    pub name: String,
+    pub return_type: Type,
+    pub params: Vec<Param>,
+    pub block: BlockStmt
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Literal {
@@ -75,6 +80,17 @@ pub enum Literal {
     Identifier(String)
 }
 
-pub enum ParseError {
+#[derive(Debug, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub param_type: Type
+}
 
+#[derive(Debug, PartialEq)]
+pub enum Type {
+    Num,
+    String,
+    Bool,
+    Identifier(String),
+    None
 }

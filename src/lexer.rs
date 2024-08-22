@@ -6,7 +6,7 @@ pub enum Token {
     // Single-character tokens.
     LeftParen, RightParen, LeftBrace, RightBrace,
     Coma, Dot, Minus, Plus, Semicolon, Slash, Star,
-    Percent, PlusEqual, MinusEqual,
+    Percent, PlusEqual, MinusEqual, Colon,
 
     // One or two character tokens.
     Bang, NotEqual,
@@ -179,6 +179,7 @@ impl Lexer {
                 }
             },
             ';' => Some(Token::Semicolon),
+            ':' => Some(Token::Colon),
             '*' => Some(Token::Star),
             '%' => Some(Token::Percent),
             '!' => {
