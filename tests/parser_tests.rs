@@ -13,7 +13,6 @@
         let mut parser = Parser::new(tokens);
 
         let result = parser.parse();
-        //
         let mut stmts = Vec::new();
         stmts.push(
             Stmt::Expr(

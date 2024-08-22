@@ -1,8 +1,10 @@
 use core::panic;
+use std::fmt::Error;
+use std::net::ToSocketAddrs;
 use std::string::ParseError;
 
 use crate::lexer::Token;
-use crate::ast::{BlockStmt, EmptyStmt, Expr, ExprStmt, Literal, Stmt, VarStmt};
+use crate::ast::{BlockStmt, EmptyStmt, Expr, ExprStmt, ForStmt, IfStmt, Literal, Stmt, VarStmt};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum Binding {
@@ -59,6 +61,16 @@ impl Parser {
         self.current < self.tokens.len() && self.tokens[self.current] != Token::Eof
     }
 
+    fn expect(&mut self, expected: &Token) -> Result<&Token, ParseError> {
+        let current = self.current_token();
+        
+        if std::mem::discriminant(current) != std::mem::discriminant(expected) {
+            panic!("Expected {} but found {}", expected, current);
+        }
+
+        return Ok(self.get_token_and_move());
+    }
+
     fn parse_stmt(&mut self) -> Stmt {
         let stmt = self.handle_stmt();
 
@@ -83,7 +95,7 @@ impl Parser {
     fn parse_expr(&mut self, binding: Binding) -> Expr {
         let mut left = match self.handle_literal() {
             Some(l) => l,
-            None => Expr::Semicolon
+            None => panic!("Unable to parse literal {}", self.current_token())
         };
 
         while self.get_current_token_power() > binding {
@@ -160,12 +172,57 @@ impl Parser {
         Expr::Assignment(Box::new(left), Box::new(right))
     }
 
-    fn parse_if(&self) -> Stmt {
-        Stmt::Empty(EmptyStmt {  })
+    fn parse_if_stmt(&mut self) -> Stmt {
+        self.get_token_and_move();
+        let condition = self.parse_expr(Binding::Assign);
+        let main = self.parse_block_stmt();
+
+        let mut alter = Stmt::Empty(EmptyStmt {  });
+        if self.current_token() == &Token::Else {
+            self.get_token_and_move();
+
+            if self.current_token() == &Token::If {
+                alter = self.parse_if_stmt();
+            } else {
+                alter = self.parse_block_stmt();
+            }
+        }
+
+        Stmt::If(IfStmt { condition, main: Box::new(main), alter: Box::new(alter) })
     }
 
-    fn parse_for(&self) -> Stmt {
-        Stmt::Empty(EmptyStmt {  })
+    fn parse_for(&mut self) -> Stmt {
+        self.get_token_and_move();
+        //initialize with some values
+        let mut for_stmt = ForStmt { item : "any".to_string(), use_index: false, iterator: Expr::Empty, body: BlockStmt { stmts: Vec::new() } };
+        
+        let item_name = match self.expect(&Token::Identifier("any".to_string())) {
+            Ok(t) => match t {
+                Token::Identifier(s) => s,
+                _ => panic!("Incorrect type of token")
+            },
+            Err(e) => panic!("Error occured! {}", e)
+        };
+        
+        for_stmt.item = item_name.to_string();
+
+        if self.current_token() == &Token::Coma {
+            self.expect(&Token::Coma).unwrap();
+            self.expect(&Token::Identifier("any".to_string())).unwrap();
+            for_stmt.use_index = true;
+        }
+        
+        self.expect(&Token::In).unwrap();
+        let iterator = self.parse_expr(Binding::Def);
+        for_stmt.iterator = iterator;
+        
+        let body = match self.parse_block_stmt() {
+            Stmt::Block(b) => b,
+            _ => panic!("Incorrect type of block statement!")
+        };
+        for_stmt.body = body;
+
+        Stmt::For(for_stmt)
     }
 
     fn parse_fun(&self) -> Stmt {
@@ -201,7 +258,7 @@ impl Parser {
         match self.current_token() {
             Token::LeftBrace => Some(self.parse_block_stmt()),
             Token::Var => Some(self.parse_var()),
-            Token::If => Some(self.parse_if()),
+            Token::If => Some(self.parse_if_stmt()),
             Token::For => Some(self.parse_for()),
             Token::Fun => Some(self.parse_fun()),
             Token::Class => Some(self.parse_class()),

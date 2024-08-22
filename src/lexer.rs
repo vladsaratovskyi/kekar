@@ -18,7 +18,7 @@ pub enum Token {
     Identifier(String), String(String), Number(f64),
 
     // Keywords.
-    And, Class, Else, False, Fun, For, If, None, Or,
+    And, Class, Else, False, Fun, For, If, In, None, Or,
     Print, Return, Super, This, True, Var, While, Import,
 
     Eof
@@ -37,6 +37,7 @@ fn get_keyword(key: &str) -> Option<Token> {
         "else" => Some(Token::Else),
         "fun" => Some(Token::Fun),
         "for" => Some(Token::For),
+        "in" => Some(Token::In),
         "if" => Some(Token::If),
         "None" => Some(Token::None),
         "or" => Some(Token::Or),

@@ -1,0 +1,5 @@
+{
+    for num, index in nums {
+        var a = index;
+    }
+}

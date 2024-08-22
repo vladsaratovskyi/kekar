@@ -1,0 +1,7 @@
+{
+    if true {
+        var a = 0;
+    } else {
+        var a = 1;
+    }
+}

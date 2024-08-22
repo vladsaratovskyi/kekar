@@ -6,10 +6,7 @@ pub enum Expr {
     Binary(Box<Expr>, Token, Box<Expr>),
     Literal(Literal),
     Assignment(Box<Expr>, Box<Expr>),
-    MethodCall,
-    For,
-    If,
-    Semicolon
+    Empty
 }
 
 #[derive(Debug, PartialEq)]
@@ -18,6 +15,8 @@ pub enum Stmt {
     Expr(ExprStmt),
     Var(VarStmt),
     Empty(EmptyStmt),
+    If(IfStmt),
+    For(ForStmt),
 }
 
 impl Expr {
@@ -47,6 +46,21 @@ pub struct VarStmt {
     pub name: String,
     pub assignment: Expr,
     //type: Type
+}
+
+#[derive(Debug, PartialEq)]
+pub struct IfStmt {
+    pub condition: Expr,
+    pub main: Box<Stmt>,
+    pub alter: Box<Stmt>
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ForStmt {
+    pub item: String,
+    pub use_index: bool,
+    pub iterator: Expr,
+    pub body: BlockStmt
 }
 
 #[derive(Debug, PartialEq)]
