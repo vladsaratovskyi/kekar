@@ -69,10 +69,15 @@ impl Parser {
         return self.get_token_and_move();
     }
 
+    fn expect_identifier_get_name(&mut self) -> String {
+        match self.expect(&Token::Identifier("any".to_string())) {
+            Token::Identifier(s) => s.to_string(),
+            _ => panic!("Token has no value")
+        }
+    }
+
     fn parse_stmt(&mut self) -> Stmt {
         let stmt = self.handle_stmt();
-
-        
 
         match stmt {
             Some(s) => s,
@@ -82,17 +87,13 @@ impl Parser {
 
     fn parse_exrp_stmt(&mut self) -> Stmt {
         let expr = self.parse_expr(Binding::Def);
-
         self.expect(&Token::Semicolon);
 
         Stmt::Expr(ExprStmt { expr })
     }
 
     fn parse_expr(&mut self, binding: Binding) -> Expr {
-        let mut left = match self.handle_literal() {
-            Some(l) => l,
-            None => panic!("Unable to parse literal {}", self.current_token())
-        };
+        let mut left = self.handle_literal().expect(&format!("Unable to parse literal {}", self.current_token()));
 
         while self.get_current_token_power() > binding {
             left = self.handle_operator(left);
@@ -139,10 +140,7 @@ impl Parser {
 
     fn parse_var_stmt(&mut self) -> Stmt {
         self.expect(&Token::Var);
-        let name = match self.expect(&Token::Identifier("any".to_string())) {
-            Token::Identifier(s) => s.to_string(),
-            _ => panic!("Token has no value")
-        };
+        let name = self.expect_identifier_get_name();
 
         self.expect(&Token::Equal);
         let assignment = self.parse_expr(Binding::Assign);
@@ -183,11 +181,7 @@ impl Parser {
     fn parse_for_stmt(&mut self) -> Stmt {
         self.get_token_and_move();
         //initialize with some values
-        let mut for_stmt = ForStmt { item : "any".to_string(), use_index: false, iterator: Expr::Empty, body: BlockStmt { stmts: Vec::new() } };
-        
-        let item_name = self.expect(&Token::Identifier("any".to_string()));
-        
-        for_stmt.item = item_name.to_string();
+        let mut for_stmt = ForStmt { item : self.expect_identifier_get_name(), use_index: false, iterator: Expr::Empty, body: BlockStmt { stmts: Vec::new() } };
 
         if self.current_token() == &Token::Coma {
             self.expect(&Token::Coma);
@@ -210,27 +204,15 @@ impl Parser {
 
     fn parse_fun_stmt(&mut self) -> Stmt {
         self.expect(&Token::Fun);
-        let fun_name = match self.expect(&Token::Identifier("any".to_string())) {
-            Token::Identifier(s) => s.to_string(),
-            _ => panic!("Token has no value")
-        };
+        let fun_name = self.expect_identifier_get_name();
 
         let mut params = Vec::new();
         self.expect(&Token::LeftParen);
 
         while self.has_tokens() && self.current_token() != &Token::RightParen {
-            let mut param = Param { name: "".to_string(), param_type: Type::None}; 
-            let param_type = match self.expect(&Token::Identifier("any".to_string())) {
-                Token::Identifier(s) => s,
-                _ => panic!("param has invalid type")
-            };
-            param.param_type = parse_type(param_type);
-            let param_name = match self.expect(&Token::Identifier("any".to_string())) {
-                Token::Identifier(s) => s.to_string(),
-                _ => panic!("param has invalid name")
-            };
-            param.name = param_name;
-
+            let mut param = Param { name: "".to_string(), param_type: Type::None};
+            param.param_type = parse_type(&self.expect_identifier_get_name());
+            param.name = self.expect_identifier_get_name();
             params.push(param);
 
             if !matches!(self.current_token(), &Token::RightParen | &Token::Eof) {
@@ -241,10 +223,7 @@ impl Parser {
         self.expect(&Token::RightParen);
         self.expect(&Token::Colon);
 
-        let fun_type = match self.expect(&Token::Identifier("any".to_string())) {
-            Token::Identifier(s) => parse_type(s),
-            _ => panic!("fn {} has invalid type", fun_name)
-        };
+        let fun_type = parse_type(&self.expect_identifier_get_name());
 
         let block = match self.parse_block_stmt() {
             Stmt::Block(b) => b,
