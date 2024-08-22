@@ -2,7 +2,7 @@ use core::panic;
 use std::string::ParseError;
 
 use crate::lexer::Token;
-use crate::ast::{BlockStmt, EmptyStmt, Expr, ExprStmt, Literal, Stmt};
+use crate::ast::{BlockStmt, EmptyStmt, Expr, ExprStmt, Literal, Stmt, VarStmt};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum Binding {
@@ -148,7 +148,7 @@ impl Parser {
             panic!("Expected semicolon, but {}", self.current_token())
         }
 
-        Stmt::Var(Token::Identifier(name), ExprStmt { expr: assignment_value })
+        Stmt::Var(VarStmt{ name: name, assignment: assignment_value })
     }
 
     fn parse_assignment(&mut self, left: Expr) -> Expr {

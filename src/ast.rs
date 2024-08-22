@@ -16,7 +16,7 @@ pub enum Expr {
 pub enum Stmt {
     Block(BlockStmt),
     Expr(ExprStmt),
-    Var(Token, ExprStmt),
+    Var(VarStmt),
     Empty(EmptyStmt),
 }
 
@@ -40,6 +40,13 @@ impl BlockStmt {
 #[derive(Debug, PartialEq)]
 pub struct ExprStmt {
     pub expr: Expr
+}
+
+#[derive(Debug, PartialEq)]
+pub struct VarStmt {
+    pub name: String,
+    pub assignment: Expr,
+    //type: Type
 }
 
 #[derive(Debug, PartialEq)]
