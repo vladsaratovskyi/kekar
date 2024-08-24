@@ -17,14 +17,14 @@ mod tests {
         let mut parser = Parser::new(tokens);
 
         let result = parser.parse();
-        let mut stmts = Vec::new();
-        stmts.push(Stmt::Expr(ExprStmt {
+        let stmts = vec![Stmt::Expr(ExprStmt {
             expr: Expr::Binary(
                 Box::new(Expr::Literal(Literal::Num(1.0))),
                 Token::Plus,
                 Box::new(Expr::Literal(Literal::Num(2.0))),
             ),
-        }));
+        })];
+
         let expected = BlockStmt { stmts };
 
         assert_eq!(result, expected);
