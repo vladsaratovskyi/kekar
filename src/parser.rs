@@ -2,14 +2,11 @@ use core::panic;
 use std::string::ParseError;
 
 use crate::{
-    ast::ast::{
+    ast::{
         BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt, Type,
         VarStmt,
-    },
-    lexer::lexer::Token,
+    }, helper::parse_type, lexer::Token
 };
-
-use super::helper::parse_type;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum Binding {
@@ -390,9 +387,12 @@ impl Parser {
 
 mod tests {
     use crate::{
-        ast::ast::{BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt, Type, VarStmt},
-        lexer::lexer::Token,
-        parser::parser::{Binding, Parser},
+        ast::{
+            BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt,
+            Type, VarStmt,
+        },
+        lexer::Token,
+        parser::{Binding, Parser},
     };
 
     #[test]
@@ -840,10 +840,9 @@ mod tests {
                 })],
             })),
         });
-        
+
         assert_eq!(res, expected);
     }
-
 
     #[test]
     fn parse_class_stmt() {
@@ -901,7 +900,9 @@ mod tests {
                         block: Box::new(Stmt::Block(BlockStmt {
                             stmts: vec![Stmt::Expr(ExprStmt {
                                 expr: Expr::Assignment(
-                                    Box::new(Expr::Literal(Literal::Identifier("name".to_string()))),
+                                    Box::new(Expr::Literal(Literal::Identifier(
+                                        "name".to_string(),
+                                    ))),
                                     Box::new(Expr::Literal(Literal::String("Living".to_string()))),
                                 ),
                             })],
@@ -910,7 +911,7 @@ mod tests {
                 ],
             })),
         });
-        
+
         assert_eq!(res, expected);
     }
 }

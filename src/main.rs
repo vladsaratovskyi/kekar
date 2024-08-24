@@ -2,7 +2,7 @@ use std::env;
 mod ast;
 mod lexer;
 
-use kekar::{lexer::lexer::Lexer, parser::parser::Parser};
+use kekar::{lexer::Lexer, parser::Parser};
 
 fn main() {
     let args: Vec<String> = env::args().collect();

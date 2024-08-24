@@ -1,4 +1,5 @@
-use crate::ast::ast::Type;
+use ast::Type;
+use crate::ast;
 
 pub fn parse_type(type_name: &str) -> Type {
     match type_name {

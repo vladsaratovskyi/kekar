@@ -1,4 +1,4 @@
-use crate::lexer::lexer::Token;
+use crate::lexer::Token;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
