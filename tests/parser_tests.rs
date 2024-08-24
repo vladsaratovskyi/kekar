@@ -205,13 +205,13 @@ mod tests {
                 item: "num".to_string(),
                 use_index: true,
                 iterator: Expr::Literal(Literal::Identifier("nums".to_string())),
-                body: BlockStmt {
+                body: Box::new(Stmt::Block(BlockStmt {
                     stmts: vec![Stmt::Var(VarStmt {
                         name: "a".to_string(),
                         assignment: Expr::Literal(Literal::Identifier("index".to_string())),
                         var_type: Type::None,
                     })],
-                },
+                })),
             })],
         })];
 
@@ -261,7 +261,7 @@ mod tests {
                     param_type: Type::Num,
                 },
             ],
-            block: BlockStmt {
+            block: Box::new(Stmt::Block(BlockStmt {
                 stmts: vec![Stmt::Var(VarStmt {
                     name: "c".to_string(),
                     assignment: Expr::Binary(
@@ -271,7 +271,7 @@ mod tests {
                     ),
                     var_type: Type::None,
                 })],
-            },
+            })),
         })];
 
         let expected = BlockStmt { stmts };
@@ -315,7 +315,7 @@ mod tests {
 
         let stmts = vec![Stmt::Class(ClassStmt {
             name: "Animal".to_string(),
-            block: BlockStmt {
+            block: Box::new(Stmt::Block(BlockStmt {
                 stmts: vec![
                     Stmt::Var(VarStmt {
                         name: "name".to_string(),
@@ -331,17 +331,17 @@ mod tests {
                         name: "live".to_string(),
                         return_type: Type::String,
                         params: vec![],
-                        block: BlockStmt {
+                        block: Box::new(Stmt::Block(BlockStmt {
                             stmts: vec![Stmt::Expr(ExprStmt {
                                 expr: Expr::Assignment(
                                     Box::new(Expr::Literal(Literal::Identifier("name".to_string()))),
                                     Box::new(Expr::Literal(Literal::String("Living".to_string()))),
                                 ),
                             })],
-                        },
+                        })),
                     }),
                 ],
-            },
+            })),
         })];
 
         let expected = BlockStmt { stmts };
