@@ -4,9 +4,10 @@ use std::fs::{self};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Single-character tokens.
-    LeftParen, RightParen, LeftBrace, RightBrace,
+    LeftParen, RightParen, LeftBracket, RightBracket,
     Coma, Dot, Minus, Plus, Semicolon, Slash, Star,
-    Percent, PlusEqual, MinusEqual, Colon,
+    Percent, PlusEqual, MinusEqual, Colon, LeftBrace,
+    RightBrace,
 
     // One or two character tokens.
     Not, NotEqual,
@@ -150,7 +151,7 @@ impl Lexer {
         while is_letter(self.peek_char()) { self.move_next(); continue; }
 
         let value = self.get_value();
-        Some(get_keyword(&value).unwrap())
+        Some(get_keyword(&value)?)
     }
  
     fn scan_token(&mut self) -> Option<Token> {
@@ -158,8 +159,8 @@ impl Lexer {
         match char {
             '(' => Some(Token::LeftParen),
             ')' => Some(Token::RightParen),
-            '{' => Some(Token::LeftBrace),
-            '}' => Some(Token::RightBrace),
+            '{' => Some(Token::LeftBracket),
+            '}' => Some(Token::RightBracket),
             ',' => Some(Token::Coma),
             '.' => Some(Token::Dot),
             '-' => {

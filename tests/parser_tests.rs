@@ -65,25 +65,25 @@ mod tests {
     #[test]
     fn parse_if_else() {
         let tokens = vec![
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::If,
             Token::True,
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Var,
             Token::Identifier("a".to_string()),
             Token::Equal,
             Token::Number(0.0),
             Token::Semicolon,
-            Token::RightBrace,
+            Token::RightBracket,
             Token::Else,
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Var,
             Token::Identifier("a".to_string()),
             Token::Equal,
             Token::Number(1.0),
             Token::Semicolon,
-            Token::RightBrace,
-            Token::RightBrace,
+            Token::RightBracket,
+            Token::RightBracket,
         ];
 
         let mut parser = Parser::new(tokens);
@@ -117,28 +117,28 @@ mod tests {
     #[test]
     fn parse_if_else_if() {
         let tokens = vec![
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::If,
             Token::True,
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Var,
             Token::Identifier("a".to_string()),
             Token::Equal,
             Token::Number(0.0),
             Token::Semicolon,
-            Token::RightBrace,
+            Token::RightBracket,
             Token::Else,
             Token::If,
             Token::Not,
             Token::False,
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Var,
             Token::Identifier("a".to_string()),
             Token::Equal,
             Token::Number(1.0),
             Token::Semicolon,
-            Token::RightBrace,
-            Token::RightBrace,
+            Token::RightBracket,
+            Token::RightBracket,
         ];
 
         let mut parser = Parser::new(tokens);
@@ -179,21 +179,21 @@ mod tests {
     #[test]
     fn parse_for() {
         let tokens = vec![
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::For,
             Token::Identifier("num".to_string()),
             Token::Coma,
             Token::Identifier("index".to_string()),
             Token::In,
             Token::Identifier("nums".to_string()),
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Var,
             Token::Identifier("a".to_string()),
             Token::Equal,
             Token::Identifier("index".to_string()),
             Token::Semicolon,
-            Token::RightBrace,
-            Token::RightBrace,
+            Token::RightBracket,
+            Token::RightBracket,
         ];
 
         let mut parser = Parser::new(tokens);
@@ -233,7 +233,7 @@ mod tests {
             Token::RightParen,
             Token::Colon,
             Token::Identifier("num".to_string()),
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Var,
             Token::Identifier("c".to_string()),
             Token::Equal,
@@ -241,7 +241,7 @@ mod tests {
             Token::Plus,
             Token::Identifier("b".to_string()),
             Token::Semicolon,
-            Token::RightBrace,
+            Token::RightBracket,
         ];
 
         let mut parser = Parser::new(tokens);
@@ -283,7 +283,7 @@ mod tests {
         let tokens = vec![
             Token::Class,
             Token::Identifier("Animal".to_string()),
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Var,
             Token::Identifier("name".to_string()),
             Token::Colon,
@@ -300,13 +300,13 @@ mod tests {
             Token::RightParen,
             Token::Colon,
             Token::Identifier("String".to_string()),
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Identifier("name".to_string()),
             Token::Equal,
             Token::String("Living".to_string()),
             Token::Semicolon,
-            Token::RightBrace,
-            Token::RightBrace,
+            Token::RightBracket,
+            Token::RightBracket,
         ];
 
         let mut parser = Parser::new(tokens);

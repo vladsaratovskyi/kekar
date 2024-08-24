@@ -6,6 +6,7 @@ pub enum Expr {
     Binary(Box<Expr>, Token, Box<Expr>),
     Literal(Literal),
     Assignment(Box<Expr>, Box<Expr>),
+    Call(CallExpr),
     Empty
 }
 
@@ -72,6 +73,12 @@ pub struct ReturnStmt {
 pub struct ClassStmt {
     pub name: String,
     pub block: Box<Stmt>
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct CallExpr {
+    pub method_name: Box<Expr>,
+    pub arguments: Vec<Expr>
 }
 
 #[derive(Debug, PartialEq, Clone)]

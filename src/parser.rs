@@ -1,11 +1,12 @@
 use core::panic;
-use std::string::ParseError;
 
 use crate::{
     ast::{
-        BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt, Type,
-        VarStmt,
-    }, helper::parse_type, lexer::Token
+        BlockStmt, CallExpr, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param,
+        Stmt, Type, VarStmt,
+    },
+    helper::parse_type,
+    lexer::Token,
 };
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -25,7 +26,7 @@ enum Binding {
 
 pub struct Parser {
     tokens: Vec<Token>,
-    errors: Vec<ParseError>,
+    //errors: Vec<ParseError>,
     current: usize,
 }
 
@@ -33,7 +34,7 @@ impl Parser {
     pub fn new(tokens: Vec<Token>) -> Parser {
         Parser {
             tokens,
-            errors: Vec::new(),
+            //errors: Vec::new(),
             current: 0,
         }
     }
@@ -70,7 +71,7 @@ impl Parser {
             panic!("Expected {} but found {}", expected, current);
         }
 
-        return self.get_token_and_move();
+        self.get_token_and_move()
     }
 
     fn expect_identifier_get_name(&mut self) -> String {
@@ -98,7 +99,7 @@ impl Parser {
 
     fn parse_expr(&mut self, binding: Binding) -> Expr {
         let mut left = self
-            .handle_literal()
+            .handle_expr()
             .expect(&format!("Unable to parse literal {}", self.current_token()));
 
         while self.get_current_token_power() > binding {
@@ -109,15 +110,15 @@ impl Parser {
     }
 
     fn parse_block_stmt(&mut self) -> Stmt {
-        self.expect(&Token::LeftBrace);
+        self.expect(&Token::LeftBracket);
 
         let mut body = Vec::new();
 
-        while self.has_tokens() && self.current_token() != &Token::RightBrace {
+        while self.has_tokens() && self.current_token() != &Token::RightBracket {
             body.push(self.parse_stmt());
         }
 
-        self.expect(&Token::RightBrace);
+        self.expect(&Token::RightBracket);
 
         Stmt::Block(BlockStmt { stmts: body })
     }
@@ -267,11 +268,27 @@ impl Parser {
         })
     }
 
-    fn parse_fun_call_expr(&self) -> Expr {
-        Expr::Empty
+    fn parse_fun_call_expr(&mut self, left: Expr) -> Expr {
+        self.get_token_and_move();
+        let mut arguments = Vec::new();
+
+        while self.has_tokens() && self.current_token() != &Token::RightParen {
+            arguments.push(self.parse_expr(Binding::Assign));
+
+            if !matches!(self.current_token(), &Token::RightParen | &Token::Eof) {
+                self.expect(&Token::Coma);
+            }
+        }
+
+        self.expect(&Token::RightParen);
+
+        Expr::Call(CallExpr {
+            method_name: Box::new(left),
+            arguments,
+        })
     }
 
-    fn parser_member_exrp(&self) -> Expr {
+    fn parser_member_exrp(&self, left: Expr) -> Expr {
         Expr::Empty
     }
 
@@ -290,7 +307,14 @@ impl Parser {
         Stmt::Empty
     }
 
-    fn handle_literal(&mut self) -> Option<Expr> {
+    fn parse_group_expr(&mut self) -> Expr {
+        self.expect(&Token::LeftParen);
+        let exrp = self.parse_expr(Binding::Def);
+        self.expect(&Token::RightParen);
+        return exrp;
+    }
+
+    fn handle_expr(&mut self) -> Option<Expr> {
         //TODO extend
         match self.current_token() {
             Token::Number(_) => Some(self.parse_primary_expr()),
@@ -301,6 +325,8 @@ impl Parser {
             //Unary
             Token::Minus => Some(self.parse_prefix_expr()),
             Token::Not => Some(self.parse_prefix_expr()),
+            //Group
+            Token::LeftParen => Some(self.parse_group_expr()),
             Token::Semicolon => None,
             _ => panic!(
                 "No handler found for literal token {}",
@@ -312,7 +338,7 @@ impl Parser {
     fn handle_stmt(&mut self) -> Option<Stmt> {
         //TODO extend
         match self.current_token() {
-            Token::LeftBrace => Some(self.parse_block_stmt()),
+            Token::LeftBracket => Some(self.parse_block_stmt()),
             Token::Var => Some(self.parse_var_stmt()),
             Token::If => Some(self.parse_if_stmt()),
             Token::For => Some(self.parse_for_stmt()),
@@ -342,14 +368,14 @@ impl Parser {
             //Logical
             Token::And => self.parse_binary_expr(left),
             Token::Or => self.parse_binary_expr(left),
-            //Assignment
+            //Assignme
             Token::Equal => self.parse_assignment_exrp(left),
             Token::PlusEqual => self.parse_assignment_exrp(left),
             Token::MinusEqual => self.parse_assignment_exrp(left),
             //Call, Member
-            Token::LeftParen => self.parse_fun_call_expr(),
-            Token::LeftBrace => self.parser_member_exrp(),
-            Token::Dot => self.parser_member_exrp(),
+            Token::LeftParen => self.parse_fun_call_expr(left),
+            Token::LeftBracket => self.parser_member_exrp(left),
+            Token::Dot => self.parser_member_exrp(left),
             _ => panic!(
                 "No handler found for operator token {}",
                 self.current_token()
@@ -380,6 +406,7 @@ impl Parser {
             Token::Equal => Binding::Assign,
             Token::PlusEqual => Binding::Assign,
             Token::MinusEqual => Binding::Assign,
+            Token::LeftParen => Binding::Call,
             _ => Binding::Def,
         }
     }
@@ -388,8 +415,8 @@ impl Parser {
 mod tests {
     use crate::{
         ast::{
-            BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt,
-            Type, VarStmt,
+            BlockStmt, CallExpr, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal,
+            Param, Stmt, Type, VarStmt,
         },
         lexer::Token,
         parser::{Binding, Parser},
@@ -443,7 +470,7 @@ mod tests {
 
     #[test]
     fn parse_block_stmt_empty() {
-        let tokens = vec![Token::LeftBrace, Token::RightBrace];
+        let tokens = vec![Token::LeftBracket, Token::RightBracket];
 
         let mut parser = Parser::new(tokens);
         let res = parser.parse_block_stmt();
@@ -456,13 +483,13 @@ mod tests {
     #[test]
     fn parse_block_stmt_with_var() {
         let tokens = vec![
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Var,
             Token::Identifier("variable".to_string()),
             Token::Colon,
             Token::Identifier("Num".to_string()),
             Token::Semicolon,
-            Token::RightBrace,
+            Token::RightBracket,
         ];
 
         let mut parser = Parser::new(tokens);
@@ -615,12 +642,12 @@ mod tests {
         let tokens = vec![
             Token::If,
             Token::True,
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Number(1.0),
             Token::Plus,
             Token::Number(2.0),
             Token::Semicolon,
-            Token::RightBrace,
+            Token::RightBracket,
             Token::Eof,
         ];
 
@@ -649,19 +676,19 @@ mod tests {
         let tokens = vec![
             Token::If,
             Token::True,
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Number(1.0),
             Token::Plus,
             Token::Number(2.0),
             Token::Semicolon,
-            Token::RightBrace,
+            Token::RightBracket,
             Token::Else,
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Number(3.0),
             Token::Plus,
             Token::Number(4.0),
             Token::Semicolon,
-            Token::RightBrace,
+            Token::RightBracket,
             Token::Eof,
         ];
 
@@ -698,21 +725,21 @@ mod tests {
         let tokens = vec![
             Token::If,
             Token::True,
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Number(1.0),
             Token::Plus,
             Token::Number(2.0),
             Token::Semicolon,
-            Token::RightBrace,
+            Token::RightBracket,
             Token::Else,
             Token::If,
             Token::True,
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Number(3.0),
             Token::Plus,
             Token::Number(4.0),
             Token::Semicolon,
-            Token::RightBrace,
+            Token::RightBracket,
             Token::Eof,
         ];
 
@@ -757,13 +784,13 @@ mod tests {
             Token::Identifier("index".to_string()),
             Token::In,
             Token::Identifier("nums".to_string()),
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Var,
             Token::Identifier("a".to_string()),
             Token::Equal,
             Token::Identifier("index".to_string()),
             Token::Semicolon,
-            Token::RightBrace,
+            Token::RightBracket,
             Token::Eof,
         ];
 
@@ -800,7 +827,7 @@ mod tests {
             Token::RightParen,
             Token::Colon,
             Token::Identifier("num".to_string()),
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Var,
             Token::Identifier("c".to_string()),
             Token::Equal,
@@ -808,7 +835,7 @@ mod tests {
             Token::Plus,
             Token::Identifier("b".to_string()),
             Token::Semicolon,
-            Token::RightBrace,
+            Token::RightBracket,
             Token::Eof,
         ];
 
@@ -849,7 +876,7 @@ mod tests {
         let tokens = vec![
             Token::Class,
             Token::Identifier("Animal".to_string()),
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Var,
             Token::Identifier("name".to_string()),
             Token::Colon,
@@ -866,13 +893,13 @@ mod tests {
             Token::RightParen,
             Token::Colon,
             Token::Identifier("String".to_string()),
-            Token::LeftBrace,
+            Token::LeftBracket,
             Token::Identifier("name".to_string()),
             Token::Equal,
             Token::String("Living".to_string()),
             Token::Semicolon,
-            Token::RightBrace,
-            Token::RightBrace,
+            Token::RightBracket,
+            Token::RightBracket,
             Token::Eof,
         ];
 
@@ -910,6 +937,32 @@ mod tests {
                     }),
                 ],
             })),
+        });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parsr_call_expr() {
+        let tokens = vec![
+            Token::LeftParen,
+            Token::Identifier("arg_one".to_string()),
+            Token::Coma,
+            Token::Identifier("arg_two".to_string()),
+            Token::RightParen,
+            Token::Semicolon,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_fun_call_expr(Expr::Literal(Literal::Identifier("call".to_string())));
+
+        let expected = Expr::Call(CallExpr {
+            method_name: Box::new(Expr::Literal(Literal::Identifier("call".to_string()))),
+            arguments: vec![
+                Expr::Literal(Literal::Identifier("arg_one".to_string())),
+                Expr::Literal(Literal::Identifier("arg_two".to_string())),
+            ],
         });
 
         assert_eq!(res, expected);
