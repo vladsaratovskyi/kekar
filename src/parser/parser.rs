@@ -102,7 +102,7 @@ impl Parser {
     fn parse_expr(&mut self, binding: Binding) -> Expr {
         let mut left = self
             .handle_literal()
-            .expect(&format!("Unable to parse literal {}", self.current_token()));
+            .unwrap_or_else(|| panic!("Unable to parse literal {}", self.current_token()));
 
         while self.get_current_token_power() > binding {
             left = self.handle_operator(left);
@@ -397,11 +397,7 @@ impl Parser {
 }
 
 mod tests {
-    use crate::{
-        ast::ast::{BlockStmt, Expr, Literal, Stmt, Type, VarStmt},
-        lexer::lexer::Token,
-        parser::parser::{Binding, Parser},
-    };
+    
 
     #[test]
     fn parse_var_stmt_with_literal() {
