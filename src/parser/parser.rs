@@ -1,8 +1,15 @@
 use core::panic;
 use std::string::ParseError;
 
-use crate::lexer::Token;
-use crate::ast::{BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt, Type, VarStmt};
+use crate::{
+    ast::ast::{
+        BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt, Type,
+        VarStmt,
+    },
+    lexer::lexer::Token,
+};
+
+use super::helper::parse_type;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum Binding {
@@ -16,13 +23,13 @@ enum Binding {
     Unary,
     Call,
     Member,
-    Primary
+    Primary,
 }
 
 pub struct Parser {
     tokens: Vec<Token>,
     errors: Vec<ParseError>,
-    current: usize
+    current: usize,
 }
 
 impl Parser {
@@ -30,7 +37,7 @@ impl Parser {
         Parser {
             tokens,
             errors: Vec::new(),
-            current: 0
+            current: 0,
         }
     }
 
@@ -61,7 +68,7 @@ impl Parser {
 
     fn expect(&mut self, expected: &Token) -> &Token {
         let current = self.current_token();
-        
+
         if std::mem::discriminant(current) != std::mem::discriminant(expected) {
             panic!("Expected {} but found {}", expected, current);
         }
@@ -72,7 +79,7 @@ impl Parser {
     fn expect_identifier_get_name(&mut self) -> String {
         match self.expect(&Token::Identifier("any".to_string())) {
             Token::Identifier(s) => s.to_string(),
-            _ => panic!("Token has no value")
+            _ => panic!("Token has no value"),
         }
     }
 
@@ -81,7 +88,7 @@ impl Parser {
 
         match stmt {
             Some(s) => s,
-            None => self.parse_exrp_stmt()
+            None => self.parse_exrp_stmt(),
         }
     }
 
@@ -93,7 +100,9 @@ impl Parser {
     }
 
     fn parse_expr(&mut self, binding: Binding) -> Expr {
-        let mut left = self.handle_literal().expect(&format!("Unable to parse literal {}", self.current_token()));
+        let mut left = self
+            .handle_literal()
+            .expect(&format!("Unable to parse literal {}", self.current_token()));
 
         while self.get_current_token_power() > binding {
             left = self.handle_operator(left);
@@ -123,7 +132,10 @@ impl Parser {
             Token::False => Expr::Literal(Literal::Bool(false)),
             Token::String(s) => Expr::Literal(Literal::String(s.to_string())),
             Token::Identifier(i) => Expr::Literal(Literal::Identifier(i.to_string())),
-            _ => panic!("No expression found for literal token {}", self.current_token())
+            _ => panic!(
+                "No expression found for literal token {}",
+                self.current_token()
+            ),
         }
     }
 
@@ -133,7 +145,7 @@ impl Parser {
         Expr::Binary(Box::new(left), operator, Box::new(self.parse_expr(binding)))
     }
 
-    fn parse_prefix_expr(&mut self) -> Expr{
+    fn parse_prefix_expr(&mut self) -> Expr {
         let operator = self.get_token_and_move();
         Expr::Unary(operator.clone(), Box::new(self.parse_expr(Binding::Unary)))
     }
@@ -156,7 +168,11 @@ impl Parser {
 
         self.expect(&Token::Semicolon);
 
-        Stmt::Var(VarStmt{ name, assignment, var_type: field_type })
+        Stmt::Var(VarStmt {
+            name,
+            assignment,
+            var_type: field_type,
+        })
     }
 
     fn parse_assignment_exrp(&mut self, left: Expr) -> Expr {
@@ -184,27 +200,36 @@ impl Parser {
             }
         }
 
-        Stmt::If(IfStmt { condition, main: Box::new(main), alter: Box::new(alter) })
+        Stmt::If(IfStmt {
+            condition,
+            main: Box::new(main),
+            alter: Box::new(alter),
+        })
     }
 
     fn parse_for_stmt(&mut self) -> Stmt {
         self.get_token_and_move();
         //initialize with some values
-        let mut for_stmt = ForStmt { item : self.expect_identifier_get_name(), use_index: false, iterator: Expr::Empty, body: BlockStmt { stmts: Vec::new() } };
+        let mut for_stmt = ForStmt {
+            item: self.expect_identifier_get_name(),
+            use_index: false,
+            iterator: Expr::Empty,
+            body: BlockStmt { stmts: Vec::new() },
+        };
 
         if self.current_token() == &Token::Coma {
             self.expect(&Token::Coma);
             self.expect(&Token::Identifier("any".to_string()));
             for_stmt.use_index = true;
         }
-        
+
         self.expect(&Token::In);
         let iterator = self.parse_expr(Binding::Def);
         for_stmt.iterator = iterator;
-        
+
         let body = match self.parse_block_stmt() {
             Stmt::Block(b) => b,
-            _ => panic!("Incorrect type of block statement!")
+            _ => panic!("Incorrect type of block statement!"),
         };
         for_stmt.body = body;
 
@@ -219,7 +244,10 @@ impl Parser {
         self.expect(&Token::LeftParen);
 
         while self.has_tokens() && self.current_token() != &Token::RightParen {
-            let mut param = Param { name: "".to_string(), param_type: Type::None};
+            let mut param = Param {
+                name: "".to_string(),
+                param_type: Type::None,
+            };
             param.param_type = parse_type(&self.expect_identifier_get_name());
             param.name = self.expect_identifier_get_name();
             params.push(param);
@@ -236,10 +264,15 @@ impl Parser {
 
         let block = match self.parse_block_stmt() {
             Stmt::Block(b) => b,
-            _ => panic!("Incorrect type of block statement!")
+            _ => panic!("Incorrect type of block statement!"),
         };
 
-        Stmt::Fun(FunStmt { name: fun_name, return_type: fun_type, params, block })
+        Stmt::Fun(FunStmt {
+            name: fun_name,
+            return_type: fun_type,
+            params,
+            block,
+        })
     }
 
     fn parse_fun_call_expr(&self) -> Expr {
@@ -255,10 +288,13 @@ impl Parser {
         let class_name = self.expect_identifier_get_name();
         let block = match self.parse_block_stmt() {
             Stmt::Block(b) => b,
-            _ => panic!("Incorrect type of block statement!")
+            _ => panic!("Incorrect type of block statement!"),
         };
 
-        Stmt::Class(ClassStmt { name: class_name, block })
+        Stmt::Class(ClassStmt {
+            name: class_name,
+            block,
+        })
     }
 
     fn parse_import_stmt(&self) -> Stmt {
@@ -277,7 +313,10 @@ impl Parser {
             Token::Minus => Some(self.parse_prefix_expr()),
             Token::Not => Some(self.parse_prefix_expr()),
             Token::Semicolon => None,
-            _ => panic!("No handler found for literal token {}", self.current_token())
+            _ => panic!(
+                "No handler found for literal token {}",
+                self.current_token()
+            ),
         }
     }
 
@@ -291,7 +330,7 @@ impl Parser {
             Token::Fun => Some(self.parse_fun_stmt()),
             Token::Class => Some(self.parse_class_stmt()),
             Token::Import => Some(self.parse_import_stmt()),
-            _ => None
+            _ => None,
         }
     }
 
@@ -322,11 +361,14 @@ impl Parser {
             Token::LeftParen => self.parse_fun_call_expr(),
             Token::LeftBrace => self.parser_member_exrp(),
             Token::Dot => self.parser_member_exrp(),
-            _ => panic!("No handler found for operator token {}", self.current_token())
+            _ => panic!(
+                "No handler found for operator token {}",
+                self.current_token()
+            ),
         }
     }
 
-    fn get_current_token_power(&self) -> Binding{
+    fn get_current_token_power(&self) -> Binding {
         //TODO extend
         match self.current_token() {
             Token::Number(_) => Binding::Primary,
@@ -349,18 +391,174 @@ impl Parser {
             Token::Equal => Binding::Assign,
             Token::PlusEqual => Binding::Assign,
             Token::MinusEqual => Binding::Assign,
-            _ => Binding::Def
+            _ => Binding::Def,
         }
     }
-
 }
 
-fn parse_type(type_name: &str) -> Type {
-    match type_name {
-        "num" | "Num" => Type::Num,
-        "string" | "String" => Type::String,
-        "bool" | "Bool" => Type::Bool,
-        "" => Type::None,
-        s => Type::Identifier(s.to_string()),
+mod tests {
+    use crate::{
+        ast::ast::{BlockStmt, Expr, Literal, Stmt, Type, VarStmt},
+        lexer::lexer::Token,
+        parser::parser::{Binding, Parser},
+    };
+
+    #[test]
+    fn parse_var_stmt_with_literal() {
+        let tokens = vec![
+            Token::Var,
+            Token::Identifier("variable".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::Equal,
+            Token::Number(1.0),
+            Token::Semicolon,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_var_stmt();
+
+        let expected = Stmt::Var(VarStmt {
+            name: "variable".to_string(),
+            assignment: Expr::Literal(Literal::Num(1.0)),
+            var_type: Type::Num,
+        });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_var_stmt_as_declaration() {
+        let tokens = vec![
+            Token::Var,
+            Token::Identifier("variable".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::Semicolon,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_var_stmt();
+
+        let expected = Stmt::Var(VarStmt {
+            name: "variable".to_string(),
+            assignment: Expr::Empty,
+            var_type: Type::Num,
+        });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_block_stmt_empty() {
+        let tokens = vec![Token::LeftBrace, Token::RightBrace];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_block_stmt();
+
+        let expected = Stmt::Block(BlockStmt { stmts: vec![] });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_block_stmt_with_var() {
+        let tokens = vec![
+            Token::LeftBrace,
+            Token::Var,
+            Token::Identifier("variable".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::Semicolon,
+            Token::RightBrace,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_block_stmt();
+
+        let expected = Stmt::Block(BlockStmt {
+            stmts: vec![Stmt::Var(VarStmt {
+                name: "variable".to_string(),
+                assignment: Expr::Empty,
+                var_type: Type::Num,
+            })],
+        });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_expr_binary() {
+        let tokens = vec![
+            Token::Number(1.0),
+            Token::Plus,
+            Token::Number(2.0),
+            Token::Semicolon,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_expr(Binding::Def);
+
+        let expected = Expr::Binary(
+            Box::new(Expr::Literal(Literal::Num(1.0))),
+            Token::Plus,
+            Box::new(Expr::Literal(Literal::Num(2.0))),
+        );
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_expr_sum_mult_sum() {
+        let tokens = vec![
+            Token::Number(1.0),
+            Token::Plus,
+            Token::Number(2.0),
+            Token::Star,
+            Token::Number(3.0),
+            Token::Plus,
+            Token::Number(4.0),
+            Token::Semicolon,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_expr(Binding::Def);
+
+        let expected = Expr::Binary(
+            Box::new(Expr::Binary(
+                Box::new(Expr::Literal(Literal::Num(1.0))),
+                Token::Plus,
+                Box::new(Expr::Binary(
+                    Box::new(Expr::Literal(Literal::Num(2.0))),
+                    Token::Star,
+                    Box::new(Expr::Literal(Literal::Num(3.0))),
+                )),
+            )),
+            Token::Plus,
+            Box::new(Expr::Literal(Literal::Num(4.0))),
+        );
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_expr_binary_no_semicolon() {
+        let tokens = vec![
+            Token::Number(1.0),
+            Token::Plus,
+            Token::Number(2.0),
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_expr(Binding::Def);
+
+        let expected = Expr::Binary(
+            Box::new(Expr::Literal(Literal::Num(1.0))),
+            Token::Plus,
+            Box::new(Expr::Literal(Literal::Num(2.0))),
+        );
+
+        assert_eq!(res, expected);
     }
 }

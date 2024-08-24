@@ -1,14 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use kekar::{
-        ast::{
-            BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt,
-            Type, VarStmt,
-        },
-        lexer::Token,
-        parser::Parser,
-    };
+
     use std::vec;
+
+    use kekar::{ast::ast::{BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt, Type, VarStmt}, lexer::lexer::Token, parser::parser::Parser};
 
     #[test]
     fn parse_addition() {
