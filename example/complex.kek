@@ -1,0 +1,23 @@
+import System from "../src/system.kek";
+
+class Person {
+    var name: String;
+    var age: Num;
+    var items: String[];
+
+    fun init() {
+        this.name = "Name";
+        this.age = 42;
+        this.items = ["item1", "item2"];
+    }
+
+    fun find_item(String to_find): Num {
+        for item, index in this.items {
+            if item == to_find {
+                return index;
+            } else {
+                return -1;
+            }
+        }
+    }
+}
