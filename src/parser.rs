@@ -243,6 +243,7 @@ impl Parser {
     fn parse_fun_stmt(&mut self) -> Stmt {
         self.expect(&Token::Fun);
         let fun_name = self.expect_identifier_get_name();
+        let mut fun_type = Type::None;
 
         let mut params = Vec::new();
         self.expect(&Token::LeftParen);
@@ -262,9 +263,11 @@ impl Parser {
         }
 
         self.expect(&Token::RightParen);
-        self.expect(&Token::Colon);
 
-        let fun_type = self.parse_type();
+        if self.current_token() == &Token::Colon {
+            self.expect(&Token::Colon);
+            fun_type = self.parse_type();
+        }
 
         let block = self.parse_block_stmt();
 
