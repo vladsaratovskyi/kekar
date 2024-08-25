@@ -138,6 +138,7 @@ impl Parser {
             Token::False => Expr::Literal(Literal::Bool(false)),
             Token::String(s) => Expr::Literal(Literal::String(s.to_string())),
             Token::Identifier(i) => Expr::Literal(Literal::Identifier(i.to_string())),
+            Token::This => Expr::Literal(Literal::This),
             _ => panic!(
                 "No expression found for literal token {}",
                 self.current_token()
@@ -354,6 +355,7 @@ impl Parser {
             Token::String(_) => Some(self.parse_primary_expr()),
             Token::True => Some(self.parse_primary_expr()),
             Token::False => Some(self.parse_primary_expr()),
+            Token::This => Some(self.parse_primary_expr()),
             Token::Identifier(_) => Some(self.parse_primary_expr()),
             //Unary
             Token::Minus => Some(self.parse_prefix_expr()),

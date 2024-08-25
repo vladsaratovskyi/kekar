@@ -100,7 +100,8 @@ pub enum Literal {
     String(String),
     Num(f64),
     Bool(bool),
-    Identifier(String)
+    Identifier(String),
+    This
 }
 
 #[derive(Debug, PartialEq, Clone)]

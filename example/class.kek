@@ -4,6 +4,6 @@ class Animal {
 
     fun live() : String {
         name = "Living";
-        return name;
+        return this.name;
     }
 }
