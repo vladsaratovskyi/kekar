@@ -99,7 +99,7 @@ impl Parser {
     fn parse_expr(&mut self, binding: Binding) -> Expr {
         let mut left = self
             .handle_nud()
-            .expect(&format!("Unable to parse literal {}", self.current_token()));
+            .unwrap_or_else(|| panic!("Unable to parse literal {}", self.current_token()));
 
         while self.get_current_token_power() > binding {
             left = self.handle_led(left);
@@ -355,7 +355,7 @@ impl Parser {
         self.expect(&Token::LeftParen);
         let exrp = self.parse_expr(Binding::Def);
         self.expect(&Token::RightParen);
-        return exrp;
+        exrp
     }
 
     fn parse_return_stmt(&mut self) -> Stmt {

@@ -153,7 +153,7 @@ impl Lexer {
         while is_letter(self.peek_char()) { self.move_next(); continue; }
 
         let value = self.get_value();
-        Some(get_keyword(&value)?)
+        get_keyword(&value)
     }
  
     fn scan_token(&mut self) -> Option<Token> {
