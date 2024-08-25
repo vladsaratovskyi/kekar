@@ -2,7 +2,8 @@ use core::panic;
 
 use crate::{
     ast::{
-        BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt
+        BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt,
+        Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt,
     },
     helper::parse_type,
     lexer::Token,
@@ -115,7 +116,7 @@ impl Parser {
 
         while self.has_tokens() && self.current_token() != &Token::RightBracket {
             //TODO refactor check
-            if self.current_token() == &Token::Semicolon  {
+            if self.current_token() == &Token::Semicolon {
                 self.get_token_and_move();
 
                 if self.current_token() == &Token::RightBracket {
@@ -344,8 +345,12 @@ impl Parser {
 
     fn parse_return_stmt(&mut self) -> Stmt {
         self.expect(&Token::Return);
-        
-        Stmt::Return(ReturnStmt { return_expr: self.parse_expr(Binding::Def) })
+
+        let expr = self.parse_expr(Binding::Def);
+
+        self.expect(&Token::Semicolon);
+
+        Stmt::Return(ReturnStmt { return_expr: expr })
     }
 
     fn handle_nud(&mut self) -> Option<Expr> {
@@ -453,7 +458,8 @@ impl Parser {
 mod tests {
     use crate::{
         ast::{
-            BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, MemberExpr, Param, Stmt, Type, VarStmt
+            BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt,
+            Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt,
         },
         lexer::Token,
         parser::{Binding, Parser},
@@ -909,6 +915,72 @@ mod tests {
     }
 
     #[test]
+    fn parse_fn_stmt_return() {
+        let tokens = vec![
+            Token::Fun,
+            Token::Identifier("main".to_string()),
+            Token::LeftParen,
+            Token::Identifier("num".to_string()),
+            Token::Identifier("a".to_string()),
+            Token::Coma,
+            Token::Identifier("num".to_string()),
+            Token::Identifier("b".to_string()),
+            Token::RightParen,
+            Token::Colon,
+            Token::Identifier("num".to_string()),
+            Token::LeftBracket,
+            Token::Var,
+            Token::Identifier("c".to_string()),
+            Token::Equal,
+            Token::Identifier("a".to_string()),
+            Token::Plus,
+            Token::Identifier("b".to_string()),
+            Token::Semicolon,
+            Token::Return,
+            Token::Identifier("c".to_string()),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_fun_stmt();
+
+        let expected = Stmt::Fun(FunStmt {
+            name: "main".to_string(),
+            return_type: Type::Num,
+            params: vec![
+                Param {
+                    name: "a".to_string(),
+                    param_type: Type::Num,
+                },
+                Param {
+                    name: "b".to_string(),
+                    param_type: Type::Num,
+                },
+            ],
+            block: Box::new(Stmt::Block(BlockStmt {
+                stmts: vec![
+                    Stmt::Var(VarStmt {
+                        name: "c".to_string(),
+                        assignment: Expr::Binary(
+                            Box::new(Expr::Literal(Literal::Identifier("a".to_string()))),
+                            Token::Plus,
+                            Box::new(Expr::Literal(Literal::Identifier("b".to_string()))),
+                        ),
+                        var_type: Type::None,
+                    }),
+                    Stmt::Return(ReturnStmt {
+                        return_expr: Expr::Literal(Literal::Identifier("c".to_string())),
+                    }),
+                ],
+            })),
+        });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
     fn parse_class_stmt() {
         let tokens = vec![
             Token::Class,
@@ -1041,8 +1113,7 @@ mod tests {
         ];
 
         let mut parser = Parser::new(tokens);
-        let res =
-            parser.parse_member_exrp(Expr::Literal(Literal::Identifier("array".to_string())));
+        let res = parser.parse_member_exrp(Expr::Literal(Literal::Identifier("array".to_string())));
 
         let expected = Expr::ComputedExpr(ComputedExpr {
             property: Box::new(Expr::Binary(
@@ -1051,6 +1122,50 @@ mod tests {
                 Box::new(Expr::Literal(Literal::Identifier("b".to_string()))),
             )),
             member: Box::new(Expr::Literal(Literal::Identifier("array".to_string()))),
+        });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_return_stmt_literal() {
+        let tokens = vec![
+            Token::Return,
+            Token::Number(42.0),
+            Token::Semicolon,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_return_stmt();
+
+        let expected = Stmt::Return(ReturnStmt {
+            return_expr: Expr::Literal(Literal::Num(42.0)),
+        });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_return_stmt_expr() {
+        let tokens = vec![
+            Token::Return,
+            Token::Identifier("a".to_string()),
+            Token::Plus,
+            Token::Number(42.0),
+            Token::Semicolon,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_return_stmt();
+
+        let expected = Stmt::Return(ReturnStmt {
+            return_expr: Expr::Binary(
+                Box::new(Expr::Literal(Literal::Identifier("a".to_string()))),
+                Token::Plus,
+                Box::new(Expr::Literal(Literal::Num(42.0))),
+            ),
         });
 
         assert_eq!(res, expected);
