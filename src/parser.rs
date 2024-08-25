@@ -98,11 +98,11 @@ impl Parser {
 
     fn parse_expr(&mut self, binding: Binding) -> Expr {
         let mut left = self
-            .handle_led()
+            .handle_nud()
             .expect(&format!("Unable to parse literal {}", self.current_token()));
 
         while self.get_current_token_power() > binding {
-            left = self.handle_nud(left);
+            left = self.handle_led(left);
         }
 
         left
@@ -347,7 +347,7 @@ impl Parser {
         Stmt::Return(ReturnStmt { return_expr: self.parse_expr(Binding::Def) })
     }
 
-    fn handle_led(&mut self) -> Option<Expr> {
+    fn handle_nud(&mut self) -> Option<Expr> {
         //TODO extend
         match self.current_token() {
             Token::Number(_) => Some(self.parse_primary_expr()),
@@ -383,7 +383,7 @@ impl Parser {
         }
     }
 
-    fn handle_nud(&mut self, left: Expr) -> Expr {
+    fn handle_led(&mut self, left: Expr) -> Expr {
         //TODO extend
         match self.current_token() {
             //Math
