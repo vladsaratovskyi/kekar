@@ -161,6 +161,8 @@ impl Lexer {
             ')' => Some(Token::RightParen),
             '{' => Some(Token::LeftBracket),
             '}' => Some(Token::RightBracket),
+            '[' => Some(Token::LeftBrace),
+            ']' => Some(Token::RightBrace),
             ',' => Some(Token::Coma),
             '.' => Some(Token::Dot),
             '-' => {

@@ -2,8 +2,8 @@ use core::panic;
 
 use crate::{
     ast::{
-        BlockStmt, CallExpr, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param,
-        Stmt, Type, VarStmt,
+        BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt,
+        Literal, MemberExpr, Param, Stmt, Type, VarStmt,
     },
     helper::parse_type,
     lexer::Token,
@@ -102,6 +102,9 @@ impl Parser {
             .handle_expr()
             .expect(&format!("Unable to parse literal {}", self.current_token()));
 
+        dbg!(self.get_current_token_power());
+        println!("{}", self.get_current_token_power() > binding);
+
         while self.get_current_token_power() > binding {
             left = self.handle_operator(left);
         }
@@ -138,7 +141,6 @@ impl Parser {
     }
 
     fn parse_binary_expr(&mut self, left: Expr) -> Expr {
-        dbg!(left.clone());
         let binding = self.get_current_token_power();
         let operator = self.get_token_and_move().clone();
         Expr::Binary(Box::new(left), operator, Box::new(self.parse_expr(binding)))
@@ -282,14 +284,34 @@ impl Parser {
 
         self.expect(&Token::RightParen);
 
+        let name = match left {
+            Expr::Literal(Literal::Identifier(v)) => v,
+            _ => panic!("Can not extract value from identifier"),
+        };
+
         Expr::Call(CallExpr {
-            method_name: Box::new(left),
+            method_name: name,
             arguments,
         })
     }
 
-    fn parser_member_exrp(&self, left: Expr) -> Expr {
-        Expr::Empty
+    fn parse_member_exrp(&mut self, left: Expr) -> Expr {
+        let is_computed = self.get_token_and_move() == &Token::LeftBrace;
+
+        if is_computed {
+            let expr = self.parse_expr(Binding::Def);
+            dbg!(expr.clone());
+            self.expect(&Token::RightBrace);
+            return Expr::ComputedExpr(ComputedExpr {
+                member: Box::new(left),
+                property: Box::new(expr),
+            });
+        }
+
+        Expr::Mebmer(MemberExpr {
+            member: Box::new(left),
+            property: self.expect_identifier_get_name(),
+        })
     }
 
     fn parse_class_stmt(&mut self) -> Stmt {
@@ -374,8 +396,8 @@ impl Parser {
             Token::MinusEqual => self.parse_assignment_exrp(left),
             //Call, Member
             Token::LeftParen => self.parse_fun_call_expr(left),
-            Token::LeftBracket => self.parser_member_exrp(left),
-            Token::Dot => self.parser_member_exrp(left),
+            Token::LeftBrace => self.parse_member_exrp(left),
+            Token::Dot => self.parse_member_exrp(left),
             _ => panic!(
                 "No handler found for operator token {}",
                 self.current_token()
@@ -407,6 +429,8 @@ impl Parser {
             Token::PlusEqual => Binding::Assign,
             Token::MinusEqual => Binding::Assign,
             Token::LeftParen => Binding::Call,
+            Token::LeftBrace => Binding::Member,
+            Token::Dot => Binding::Member,
             _ => Binding::Def,
         }
     }
@@ -415,8 +439,7 @@ impl Parser {
 mod tests {
     use crate::{
         ast::{
-            BlockStmt, CallExpr, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal,
-            Param, Stmt, Type, VarStmt,
+            BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, MemberExpr, Param, Stmt, Type, VarStmt
         },
         lexer::Token,
         parser::{Binding, Parser},
@@ -943,7 +966,7 @@ mod tests {
     }
 
     #[test]
-    fn parsr_call_expr() {
+    fn parse_call_expr() {
         let tokens = vec![
             Token::LeftParen,
             Token::Identifier("arg_one".to_string()),
@@ -955,14 +978,65 @@ mod tests {
         ];
 
         let mut parser = Parser::new(tokens);
-        let res = parser.parse_fun_call_expr(Expr::Literal(Literal::Identifier("call".to_string())));
+        let res =
+            parser.parse_fun_call_expr(Expr::Literal(Literal::Identifier("call".to_string())));
 
         let expected = Expr::Call(CallExpr {
-            method_name: Box::new(Expr::Literal(Literal::Identifier("call".to_string()))),
+            method_name: "call".to_string(),
             arguments: vec![
                 Expr::Literal(Literal::Identifier("arg_one".to_string())),
                 Expr::Literal(Literal::Identifier("arg_two".to_string())),
             ],
+        });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_member_expr_prop() {
+        let tokens = vec![
+            Token::Dot,
+            Token::Identifier("prop".to_string()),
+            Token::Equal,
+            Token::Number(1.0),
+            Token::Semicolon,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res =
+            parser.parse_member_exrp(Expr::Literal(Literal::Identifier("variable".to_string())));
+
+        let expected = Expr::Mebmer(MemberExpr {
+            property: "prop".to_string(),
+            member: Box::new(Expr::Literal(Literal::Identifier("variable".to_string()))),
+        });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_member_expr_computed() {
+        let tokens = vec![
+            Token::LeftBrace,
+            Token::Identifier("a".to_string()),
+            Token::Plus,
+            Token::Identifier("b".to_string()),
+            Token::RightBrace,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res =
+            parser.parse_member_exrp(Expr::Literal(Literal::Identifier("array".to_string())));
+
+        let expected = Expr::ComputedExpr(ComputedExpr {
+            property: Box::new(Expr::Binary(
+                Box::new(Expr::Literal(Literal::Identifier("a".to_string()))),
+                Token::Plus,
+                Box::new(Expr::Literal(Literal::Identifier("b".to_string()))),
+            )),
+            member: Box::new(Expr::Literal(Literal::Identifier("array".to_string()))),
         });
 
         assert_eq!(res, expected);

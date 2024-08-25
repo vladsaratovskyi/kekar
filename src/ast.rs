@@ -7,6 +7,8 @@ pub enum Expr {
     Literal(Literal),
     Assignment(Box<Expr>, Box<Expr>),
     Call(CallExpr),
+    Mebmer(MemberExpr),
+    ComputedExpr(ComputedExpr),
     Empty
 }
 
@@ -77,8 +79,20 @@ pub struct ClassStmt {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct CallExpr {
-    pub method_name: Box<Expr>,
+    pub method_name: String,
     pub arguments: Vec<Expr>
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct MemberExpr {
+    pub member: Box<Expr>,
+    pub property: String
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ComputedExpr {
+    pub member: Box<Expr>,
+    pub property: Box<Expr>
 }
 
 #[derive(Debug, PartialEq, Clone)]
