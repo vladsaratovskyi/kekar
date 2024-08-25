@@ -1,0 +1,4 @@
+fun function(): Num {
+    var a: Num = 42;
+    return a + 42;
+}

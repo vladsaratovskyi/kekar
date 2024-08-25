@@ -2,8 +2,7 @@ use core::panic;
 
 use crate::{
     ast::{
-        BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt,
-        Literal, MemberExpr, Param, Stmt, Type, VarStmt,
+        BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt
     },
     helper::parse_type,
     lexer::Token,
@@ -99,14 +98,11 @@ impl Parser {
 
     fn parse_expr(&mut self, binding: Binding) -> Expr {
         let mut left = self
-            .handle_expr()
+            .handle_led()
             .expect(&format!("Unable to parse literal {}", self.current_token()));
 
-        dbg!(self.get_current_token_power());
-        println!("{}", self.get_current_token_power() > binding);
-
         while self.get_current_token_power() > binding {
-            left = self.handle_operator(left);
+            left = self.handle_nud(left);
         }
 
         left
@@ -118,6 +114,15 @@ impl Parser {
         let mut body = Vec::new();
 
         while self.has_tokens() && self.current_token() != &Token::RightBracket {
+            //TODO refactor check
+            if self.current_token() == &Token::Semicolon  {
+                self.get_token_and_move();
+
+                if self.current_token() == &Token::RightBracket {
+                    break;
+                }
+            }
+
             body.push(self.parse_stmt());
         }
 
@@ -336,7 +341,13 @@ impl Parser {
         return exrp;
     }
 
-    fn handle_expr(&mut self) -> Option<Expr> {
+    fn parse_return_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Return);
+        
+        Stmt::Return(ReturnStmt { return_expr: self.parse_expr(Binding::Def) })
+    }
+
+    fn handle_led(&mut self) -> Option<Expr> {
         //TODO extend
         match self.current_token() {
             Token::Number(_) => Some(self.parse_primary_expr()),
@@ -367,11 +378,12 @@ impl Parser {
             Token::Fun => Some(self.parse_fun_stmt()),
             Token::Class => Some(self.parse_class_stmt()),
             Token::Import => Some(self.parse_import_stmt()),
+            Token::Return => Some(self.parse_return_stmt()),
             _ => None,
         }
     }
 
-    fn handle_operator(&mut self, left: Expr) -> Expr {
+    fn handle_nud(&mut self, left: Expr) -> Expr {
         //TODO extend
         match self.current_token() {
             //Math
