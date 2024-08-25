@@ -2,9 +2,9 @@ use core::panic;
 
 use crate::{
     ast::{
-        BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, ImportStmt, Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt
+        ArrayExpr, BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt,
+        IfStmt, ImportStmt, Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt,
     },
-    helper::parse_type,
     lexer::Token,
 };
 
@@ -164,7 +164,7 @@ impl Parser {
 
         if self.current_token() == &Token::Colon {
             self.expect(&Token::Colon);
-            field_type = parse_type(&self.expect_identifier_get_name());
+            field_type = self.parse_type();
         }
 
         let mut assignment = Expr::Empty;
@@ -252,7 +252,7 @@ impl Parser {
                 name: "".to_string(),
                 param_type: Type::None,
             };
-            param.param_type = parse_type(&self.expect_identifier_get_name());
+            param.param_type = self.parse_type();
             param.name = self.expect_identifier_get_name();
             params.push(param);
 
@@ -264,7 +264,7 @@ impl Parser {
         self.expect(&Token::RightParen);
         self.expect(&Token::Colon);
 
-        let fun_type = parse_type(&self.expect_identifier_get_name());
+        let fun_type = self.parse_type();
 
         let block = self.parse_block_stmt();
 
@@ -340,7 +340,7 @@ impl Parser {
             self.get_token_and_move();
             from = match self.expect(&Token::String("any".to_string())) {
                 Token::String(s) => s.to_string(),
-                _ => panic!("Incorrect import from value")
+                _ => panic!("Incorrect import from value"),
             }
         } else {
             from = import.clone();
@@ -368,6 +368,23 @@ impl Parser {
         Stmt::Return(ReturnStmt { return_expr: expr })
     }
 
+    fn parse_array_literal_expr(&mut self) -> Expr {
+        self.expect(&Token::LeftBrace);
+        let mut array = Vec::new();
+
+        while self.has_tokens() && self.current_token() != &Token::RightBrace {
+            array.push(self.parse_expr(Binding::Coma));
+
+            if !matches!(self.current_token(), &Token::RightBrace | &Token::Eof) {
+                self.expect(&Token::Coma);
+            }
+        }
+
+        self.expect(&Token::RightBrace);
+
+        Expr::Array(ArrayExpr { array })
+    }
+
     fn handle_nud(&mut self) -> Option<Expr> {
         //TODO extend
         match self.current_token() {
@@ -382,6 +399,7 @@ impl Parser {
             Token::Not => Some(self.parse_prefix_expr()),
             //Group
             Token::LeftParen => Some(self.parse_group_expr()),
+            Token::LeftBrace => Some(self.parse_array_literal_expr()),
             Token::Semicolon => None,
             _ => panic!(
                 "No handler found for literal token {}",
@@ -468,12 +486,33 @@ impl Parser {
             _ => Binding::Def,
         }
     }
+
+    pub fn parse_type(&mut self) -> Type {
+        let type_name = self.expect_identifier_get_name();
+        let t = match type_name.as_str() {
+            "num" | "Num" => Type::Num,
+            "string" | "String" => Type::String,
+            "bool" | "Bool" => Type::Bool,
+            "" => Type::None,
+            s => Type::Identifier(s.to_string()),
+        };
+
+        if self.current_token() == &Token::LeftBrace {
+            self.expect(&Token::LeftBrace);
+            self.expect(&Token::RightBrace);
+            Type::Array(Box::new(t))
+        } else {
+            t
+        }
+    }
 }
 
 mod tests {
     use crate::{
         ast::{
-            BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, ImportStmt, Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt
+            ArrayExpr, BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt,
+            FunStmt, IfStmt, ImportStmt, Literal, MemberExpr, Param, ReturnStmt, Stmt, Type,
+            VarStmt,
         },
         lexer::Token,
         parser::{Binding, Parser},
@@ -520,6 +559,30 @@ mod tests {
             name: "variable".to_string(),
             assignment: Expr::Empty,
             var_type: Type::Num,
+        });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_var_stmt_array() {
+        let tokens = vec![
+            Token::Var,
+            Token::Identifier("variable".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBrace,
+            Token::RightBrace,
+            Token::Semicolon,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_var_stmt();
+
+        let expected = Stmt::Var(VarStmt {
+            name: "variable".to_string(),
+            assignment: Expr::Empty,
+            var_type: Type::Array(Box::new(Type::Num)),
         });
 
         assert_eq!(res, expected);
@@ -1197,7 +1260,10 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let res = parser.parse_import_stmt();
 
-        let expected = Stmt::Import(ImportStmt { import: "System".to_string(), from: "System".to_string() });
+        let expected = Stmt::Import(ImportStmt {
+            import: "System".to_string(),
+            from: "System".to_string(),
+        });
 
         assert_eq!(res, expected);
     }
@@ -1216,9 +1282,36 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let res = parser.parse_import_stmt();
 
-        let expected = Stmt::Import(ImportStmt { import: "System".to_string(), from: "Path".to_string() });
+        let expected = Stmt::Import(ImportStmt {
+            import: "System".to_string(),
+            from: "Path".to_string(),
+        });
 
         assert_eq!(res, expected);
     }
 
+    #[test]
+    fn parse_array_expr() {
+        let tokens = vec![
+            Token::LeftBrace,
+            Token::String("item1".to_string()),
+            Token::Coma,
+            Token::String("item2".to_string()),
+            Token::RightBrace,
+            Token::Semicolon,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_array_literal_expr();
+
+        let expected = Expr::Array(ArrayExpr {
+            array: vec![
+                Expr::Literal(Literal::String("item1".to_string())),
+                Expr::Literal(Literal::String("item2".to_string())),
+            ],
+        });
+
+        assert_eq!(res, expected);
+    }
 }

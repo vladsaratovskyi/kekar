@@ -9,6 +9,7 @@ pub enum Expr {
     Call(CallExpr),
     Mebmer(MemberExpr),
     ComputedExpr(ComputedExpr),
+    Array(ArrayExpr),
     Empty
 }
 
@@ -97,6 +98,11 @@ pub struct ComputedExpr {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct ArrayExpr {
+    pub array: Vec<Expr>
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct ImportStmt {
     pub import: String,
     pub from: String
@@ -123,5 +129,6 @@ pub enum Type {
     String,
     Bool,
     Identifier(String),
+    Array(Box<Type>),
     None
 }
