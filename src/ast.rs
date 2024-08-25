@@ -22,6 +22,7 @@ pub enum Stmt {
     Fun(FunStmt),
     Class(ClassStmt),
     Return(ReturnStmt),
+    Import(ImportStmt),
     Empty
 }
 
@@ -93,6 +94,12 @@ pub struct MemberExpr {
 pub struct ComputedExpr {
     pub member: Box<Expr>,
     pub property: Box<Expr>
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ImportStmt {
+    pub import: String,
+    pub from: String
 }
 
 #[derive(Debug, PartialEq, Clone)]

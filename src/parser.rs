@@ -2,8 +2,7 @@ use core::panic;
 
 use crate::{
     ast::{
-        BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt,
-        Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt,
+        BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, ImportStmt, Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt
     },
     helper::parse_type,
     lexer::Token,
@@ -307,7 +306,6 @@ impl Parser {
 
         if is_computed {
             let expr = self.parse_expr(Binding::Def);
-            dbg!(expr.clone());
             self.expect(&Token::RightBrace);
             return Expr::ComputedExpr(ComputedExpr {
                 member: Box::new(left),
@@ -332,8 +330,25 @@ impl Parser {
         })
     }
 
-    fn parse_import_stmt(&self) -> Stmt {
-        Stmt::Empty
+    fn parse_import_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Import);
+
+        let mut from = "".to_string();
+        let import = self.expect_identifier_get_name();
+
+        if self.current_token() == &Token::From {
+            self.get_token_and_move();
+            from = match self.expect(&Token::String("any".to_string())) {
+                Token::String(s) => s.to_string(),
+                _ => panic!("Incorrect import from value")
+            }
+        } else {
+            from = import.clone();
+        }
+
+        self.expect(&Token::Semicolon);
+
+        Stmt::Import(ImportStmt { import, from })
     }
 
     fn parse_group_expr(&mut self) -> Expr {
@@ -458,8 +473,7 @@ impl Parser {
 mod tests {
     use crate::{
         ast::{
-            BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt,
-            Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt,
+            BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, ImportStmt, Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt
         },
         lexer::Token,
         parser::{Binding, Parser},
@@ -1170,4 +1184,41 @@ mod tests {
 
         assert_eq!(res, expected);
     }
+
+    #[test]
+    fn parse_import_stmt() {
+        let tokens = vec![
+            Token::Import,
+            Token::Identifier("System".to_string()),
+            Token::Semicolon,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_import_stmt();
+
+        let expected = Stmt::Import(ImportStmt { import: "System".to_string(), from: "System".to_string() });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_import_stmt_from() {
+        let tokens = vec![
+            Token::Import,
+            Token::Identifier("System".to_string()),
+            Token::From,
+            Token::String("Path".to_string()),
+            Token::Semicolon,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_import_stmt();
+
+        let expected = Stmt::Import(ImportStmt { import: "System".to_string(), from: "Path".to_string() });
+
+        assert_eq!(res, expected);
+    }
+
 }

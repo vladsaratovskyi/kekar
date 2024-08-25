@@ -21,6 +21,7 @@ pub enum Token {
     // Keywords.
     And, Class, Else, False, Fun, For, If, In, None, Or,
     Print, Return, Super, This, True, Var, While, Import,
+    From,
 
     Eof
 }
@@ -55,6 +56,7 @@ fn get_keyword(key: &str) -> Option<Token> {
         "le" => Some(Token::LessEqual),
         "lt" => Some(Token::Less),
         "import" => Some(Token::Import),
+        "from" => Some(Token::From),
         s => Some(Token::Identifier(s.to_string()))
     }
 }
