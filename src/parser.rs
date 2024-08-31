@@ -202,8 +202,8 @@ impl Parser {
 
         Stmt::If(IfStmt {
             condition,
-            main: Box::new(main),
-            alter: Box::new(alter),
+            then_block: Box::new(main),
+            else_block: Box::new(alter),
         })
     }
 
@@ -768,7 +768,7 @@ mod tests {
 
         let expected = Stmt::If(IfStmt {
             condition: Expr::Literal(Literal::Bool(true)),
-            main: Box::new(Stmt::Block(BlockStmt {
+            then_block: Box::new(Stmt::Block(BlockStmt {
                 stmts: vec![Stmt::Expr(ExprStmt {
                     expr: Expr::Binary(
                         Box::new(Expr::Literal(Literal::Num(1.0))),
@@ -777,7 +777,7 @@ mod tests {
                     ),
                 })],
             })),
-            alter: Box::new(Stmt::Empty),
+            else_block: Box::new(Stmt::Empty),
         });
 
         assert_eq!(res, expected);
@@ -809,7 +809,7 @@ mod tests {
 
         let expected = Stmt::If(IfStmt {
             condition: Expr::Literal(Literal::Bool(true)),
-            main: Box::new(Stmt::Block(BlockStmt {
+            then_block: Box::new(Stmt::Block(BlockStmt {
                 stmts: vec![Stmt::Expr(ExprStmt {
                     expr: Expr::Binary(
                         Box::new(Expr::Literal(Literal::Num(1.0))),
@@ -818,7 +818,7 @@ mod tests {
                     ),
                 })],
             })),
-            alter: Box::new(Stmt::Block(BlockStmt {
+            else_block: Box::new(Stmt::Block(BlockStmt {
                 stmts: vec![Stmt::Expr(ExprStmt {
                     expr: Expr::Binary(
                         Box::new(Expr::Literal(Literal::Num(3.0))),
@@ -860,7 +860,7 @@ mod tests {
 
         let expected = Stmt::If(IfStmt {
             condition: Expr::Literal(Literal::Bool(true)),
-            main: Box::new(Stmt::Block(BlockStmt {
+            then_block: Box::new(Stmt::Block(BlockStmt {
                 stmts: vec![Stmt::Expr(ExprStmt {
                     expr: Expr::Binary(
                         Box::new(Expr::Literal(Literal::Num(1.0))),
@@ -869,9 +869,9 @@ mod tests {
                     ),
                 })],
             })),
-            alter: Box::new(Stmt::If(IfStmt {
+            else_block: Box::new(Stmt::If(IfStmt {
                 condition: Expr::Literal(Literal::Bool(true)),
-                main: Box::new(Stmt::Block(BlockStmt {
+                then_block: Box::new(Stmt::Block(BlockStmt {
                     stmts: vec![Stmt::Expr(ExprStmt {
                         expr: Expr::Binary(
                             Box::new(Expr::Literal(Literal::Num(3.0))),
@@ -880,7 +880,7 @@ mod tests {
                         ),
                     })],
                 })),
-                alter: Box::new(Stmt::Empty),
+                else_block: Box::new(Stmt::Empty),
             })),
         });
 

@@ -93,14 +93,14 @@ mod tests {
         let stmts = vec![Stmt::Block(BlockStmt {
             stmts: vec![Stmt::If(IfStmt {
                 condition: Expr::Literal(Literal::Bool(true)),
-                main: Box::new(Stmt::Block(BlockStmt {
+                then_block: Box::new(Stmt::Block(BlockStmt {
                     stmts: vec![Stmt::Var(VarStmt {
                         name: "a".to_string(),
                         assignment: Expr::Literal(Literal::Num(0.0)),
                         var_type: Type::None,
                     })],
                 })),
-                alter: Box::new(Stmt::Block(BlockStmt {
+                else_block: Box::new(Stmt::Block(BlockStmt {
                     stmts: vec![Stmt::Var(VarStmt {
                         name: "a".to_string(),
                         assignment: Expr::Literal(Literal::Num(1.0)),
@@ -148,26 +148,26 @@ mod tests {
         let stmts = vec![Stmt::Block(BlockStmt {
             stmts: vec![Stmt::If(IfStmt {
                 condition: Expr::Literal(Literal::Bool(true)),
-                main: Box::new(Stmt::Block(BlockStmt {
+                then_block: Box::new(Stmt::Block(BlockStmt {
                     stmts: vec![Stmt::Var(VarStmt {
                         name: "a".to_string(),
                         assignment: Expr::Literal(Literal::Num(0.0)),
                         var_type: Type::None,
                     })],
                 })),
-                alter: Box::new(Stmt::If(IfStmt {
+                else_block: Box::new(Stmt::If(IfStmt {
                     condition: Expr::Unary(
                         Token::Not,
                         Box::new(Expr::Literal(Literal::Bool(false))),
                     ),
-                    main: Box::new(Stmt::Block(BlockStmt {
+                    then_block: Box::new(Stmt::Block(BlockStmt {
                         stmts: vec![Stmt::Var(VarStmt {
                             name: "a".to_string(),
                             assignment: Expr::Literal(Literal::Num(1.0)),
                             var_type: Type::None,
                         })],
                     })),
-                    alter: Box::new(Stmt::Empty),
+                    else_block: Box::new(Stmt::Empty),
                 })),
             })],
         })];

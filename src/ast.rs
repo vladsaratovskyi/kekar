@@ -47,8 +47,8 @@ pub struct VarStmt {
 #[derive(Debug, PartialEq, Clone)]
 pub struct IfStmt {
     pub condition: Expr,
-    pub main: Box<Stmt>,
-    pub alter: Box<Stmt>
+    pub then_block: Box<Stmt>,
+    pub else_block: Box<Stmt>
 }
 
 #[derive(Debug, PartialEq, Clone)]
