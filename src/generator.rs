@@ -42,13 +42,13 @@ impl ToAssembly for IfStmt {
         let else_label = ctx.generate_named_label("else");
         let end_label = ctx.generate_label();
 
-        ctx.add_code(format!("cmp {}, 0", cond_reg));
-        ctx.add_code(format!("je {}", else_label));
+        ctx.add_code(format!("    cmp {}, 0", cond_reg));
+        ctx.add_code(format!("    je {}", else_label));
         ctx.free_register(Some(cond_reg));
 
         let then_reg = self.then_block.to_assembly(ctx);
         ctx.free_register(then_reg);
-        ctx.add_code(format!("jmp {}", end_label));
+        ctx.add_code(format!("    jmp {}", end_label));
         ctx.add_code(format!("{}:", else_label));
         
         let else_reg = self.else_block.to_assembly(ctx);
@@ -71,14 +71,14 @@ impl ToAssembly for Expr {
                     Token::Slash => "div",
                     _ => todo!(),
                 };
-                ctx.add_code(format!("{} {}, {}", operator, left, right));
+                ctx.add_code(format!("    {} {}, {}", operator, left, right));
                 ctx.free_register(Some(right));
                 Some(left)
             },
             Expr::Literal(l) => match l {
                 Literal::Num(n) => {
                     let reg = ctx.allocate_register().expect("No registers available");
-                    ctx.add_code(format!("mov {}, {}", reg, n));
+                    ctx.add_code(format!("    mov {}, {}", reg, n));
                     Some(reg)
                 },
                 Literal::Bool(b) => {
@@ -89,7 +89,7 @@ impl ToAssembly for Expr {
                     }
 
                     let reg = ctx.allocate_register().expect("No registers available");
-                    ctx.add_code(format!("mov {}, {}", reg, n));
+                    ctx.add_code(format!("    mov {}, {}", reg, n));
                     Some(reg)
                 },
                 _ => None
@@ -191,7 +191,13 @@ impl AsmGenerator {
 
     pub fn generate_asm(&self, program: BlockStmt) -> String {
         let mut ctx = Context::new();
+        ctx.add_code("section .text".to_string());
+        ctx.add_code("    global _start\n".to_string());
+        ctx.add_code("_start:".to_string());
         program.to_assembly(&mut ctx);
+        ctx.add_code("    mov eax, 60".to_string());
+        ctx.add_code("    xor edi, edi".to_string());
+        ctx.add_code("    syscall".to_string());
         ctx.finalize()
     }
 }

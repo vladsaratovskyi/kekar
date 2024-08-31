@@ -21,7 +21,7 @@ fn main() {
     let mut parser = Parser::new(tokens);
     let ast = parser.parse();
 
-    dbg!(ast.clone());
+    //dbg!(ast.clone());
     let generator = AsmGenerator::new();
     let assembly = generator.generate_asm(ast);
 
