@@ -44,17 +44,16 @@ impl ToAssembly for IfStmt {
 
         ctx.add_code(format!("cmp {}, 0", cond_reg));
         ctx.add_code(format!("je {}", else_label));
+        ctx.free_register(Some(cond_reg));
 
-        self.then_block.to_assembly(ctx);
+        let then_reg = self.then_block.to_assembly(ctx);
+        ctx.free_register(then_reg);
         ctx.add_code(format!("jmp {}", end_label));
-
         ctx.add_code(format!("{}:", else_label));
         
-        self.else_block.to_assembly(ctx);
-
+        let else_reg = self.else_block.to_assembly(ctx);
+        ctx.free_register(else_reg);
         ctx.add_code(format!("{}:", end_label));
-
-        ctx.free_register(cond_reg);
         None
     }
 }
@@ -63,8 +62,8 @@ impl ToAssembly for Expr {
     fn to_assembly(&self, ctx: &mut Context) -> Option<Register> {
         let res = match self {
             Expr::Binary(l, t, r) => {
-                let left = l.to_assembly(ctx).unwrap();
-                let right = r.to_assembly(ctx).unwrap();
+                let left = l.to_assembly(ctx)?;
+                let right = r.to_assembly(ctx)?;
                 let operator = match t {
                     Token::Plus => "add",
                     Token::Minus => "sub",
@@ -73,9 +72,9 @@ impl ToAssembly for Expr {
                     _ => todo!(),
                 };
                 ctx.add_code(format!("{} {}, {}", operator, left, right));
-                ctx.free_register(right);
+                ctx.free_register(Some(right));
                 Some(left)
-            }
+            },
             Expr::Literal(l) => match l {
                 Literal::Num(n) => {
                     let reg = ctx.allocate_register().expect("No registers available");
@@ -84,7 +83,7 @@ impl ToAssembly for Expr {
                 },
                 Literal::Bool(b) => {
                     let mut n = 1;
-                    
+
                     if !b {
                         n = 0;
                     }
@@ -140,14 +139,14 @@ impl Context {
         Self {
             next_label: 0,
             registers: vec![
-                Register::Rax,
-                Register::Rbx,
-                Register::Rcx,
-                Register::Rdx,
-                Register::Rsi,
-                Register::Rdi,
-                Register::Esp,
                 Register::Ebp,
+                Register::Esp,
+                Register::Rdi,
+                Register::Rsi,
+                Register::Rdx,
+                Register::Rcx,
+                Register::Rbx,
+                Register::Rax,
             ],
             code: Vec::new(),
         }
@@ -173,8 +172,11 @@ impl Context {
         self.registers.pop()
     }
 
-    pub fn free_register(&mut self, reg: Register) {
-        self.registers.push(reg);
+    pub fn free_register(&mut self, reg: Option<Register>) {
+        match reg {
+            Some(r) => self.registers.push(r),
+            _ => ()
+        }
     }
 
     pub fn finalize(self) -> String {
