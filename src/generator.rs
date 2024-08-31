@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{collections::VecDeque, fmt::Display};
 
 use kekar::{
     ast::{BlockStmt, Expr, ExprStmt, IfStmt, Literal, Stmt},
@@ -12,7 +12,8 @@ pub trait ToAssembly {
 impl ToAssembly for BlockStmt {
     fn to_assembly(&self, ctx: &mut Context) -> Option<Register> {
         for stmt in self.stmts.iter() {
-            stmt.to_assembly(ctx);
+            let reg = stmt.to_assembly(ctx);
+            ctx.free_register(reg);
         }
         None
     }
@@ -54,6 +55,8 @@ impl ToAssembly for IfStmt {
         let else_reg = self.else_block.to_assembly(ctx);
         ctx.free_register(else_reg);
         ctx.add_code(format!("{}:", end_label));
+
+        dbg!(&ctx.registers);
         None
     }
 }
@@ -100,6 +103,7 @@ impl ToAssembly for Expr {
     }
 }
 
+#[derive(Debug)]
 pub enum Register {
     Rax,
     Rbx,
@@ -126,9 +130,10 @@ impl Display for Register {
     }
 }
 
+#[derive(Debug)]
 pub struct Context {
     next_label: usize,
-    registers: Vec<Register>,
+    registers: VecDeque<Register>,
     code: Vec<String>,
 }
 
@@ -136,18 +141,18 @@ pub struct AsmGenerator {}
 
 impl Context {
     pub fn new() -> Self {
+        let mut deque = VecDeque::new();
+        deque.push_front(Register::Ebp);
+        deque.push_front(Register::Esp);
+        deque.push_front(Register::Rdi);
+        deque.push_front(Register::Rsi);
+        deque.push_front(Register::Rdx);
+        deque.push_front(Register::Rcx);
+        deque.push_front(Register::Rbx);
+        deque.push_front(Register::Rax);
         Self {
             next_label: 0,
-            registers: vec![
-                Register::Ebp,
-                Register::Esp,
-                Register::Rdi,
-                Register::Rsi,
-                Register::Rdx,
-                Register::Rcx,
-                Register::Rbx,
-                Register::Rax,
-            ],
+            registers: deque,
             code: Vec::new(),
         }
     }
@@ -169,12 +174,12 @@ impl Context {
     }
 
     pub fn allocate_register(&mut self) -> Option<Register> {
-        self.registers.pop()
+        self.registers.pop_front()
     }
 
     pub fn free_register(&mut self, reg: Option<Register>) {
         match reg {
-            Some(r) => self.registers.push(r),
+            Some(r) => self.registers.push_front(r),
             _ => ()
         }
     }
@@ -198,6 +203,7 @@ impl AsmGenerator {
         ctx.add_code("    mov eax, 60".to_string());
         ctx.add_code("    xor edi, edi".to_string());
         ctx.add_code("    syscall".to_string());
+
         ctx.finalize()
     }
 }
