@@ -39,7 +39,7 @@ impl ToAssembly for ExprStmt {
 impl ToAssembly for IfStmt {
     fn to_assembly(&self, ctx: &mut Context) -> Option<Register> {
         let cond_reg = self.condition.to_assembly(ctx)?;
-        let else_label = ctx.generate_label();
+        let else_label = ctx.generate_named_label("else");
         let end_label = ctx.generate_label();
 
         ctx.add_code(format!("cmp {}, 0", cond_reg));
@@ -78,6 +78,17 @@ impl ToAssembly for Expr {
             }
             Expr::Literal(l) => match l {
                 Literal::Num(n) => {
+                    let reg = ctx.allocate_register().expect("No registers available");
+                    ctx.add_code(format!("mov {}, {}", reg, n));
+                    Some(reg)
+                },
+                Literal::Bool(b) => {
+                    let mut n = 1;
+                    
+                    if !b {
+                        n = 0;
+                    }
+
                     let reg = ctx.allocate_register().expect("No registers available");
                     ctx.add_code(format!("mov {}, {}", reg, n));
                     Some(reg)
@@ -144,6 +155,12 @@ impl Context {
 
     pub fn generate_label(&mut self) -> String {
         let label = format!("label_{}", self.next_label);
+        self.next_label += 1;
+        label
+    }
+
+    pub fn generate_named_label(&mut self, prefix: &str) -> String {
+        let label = format!("{}_{}", prefix, self.next_label);
         self.next_label += 1;
         label
     }
