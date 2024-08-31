@@ -6,42 +6,40 @@ use kekar::{
 };
 
 pub trait ToAssembly {
-    fn to_assembly(&self, ctx: &mut Context) -> String;
+    fn to_assembly(&self, ctx: &mut Context) -> Option<Register>;
 }
 
 impl ToAssembly for BlockStmt {
-    fn to_assembly(&self, ctx: &mut Context) -> String {
-        let mut code = "".to_string();
-
+    fn to_assembly(&self, ctx: &mut Context) -> Option<Register> {
         for stmt in self.stmts.iter() {
-            code.push_str(stmt.to_assembly(ctx).as_str());
+            stmt.to_assembly(ctx);
         }
-        code
+        None
     }
 }
 
 impl ToAssembly for Stmt {
-    fn to_assembly(&self, ctx: &mut Context) -> String {
-        let code = match self {
+    fn to_assembly(&self, ctx: &mut Context) -> Option<Register> {
+        let reg = match self {
             Stmt::Expr(e) => e.to_assembly(ctx),
-            _ => "".to_string(),
+            _ => None,
         };
-        code
+        reg
     }
 }
 
 impl ToAssembly for ExprStmt {
-    fn to_assembly(&self, ctx: &mut Context) -> String {
+    fn to_assembly(&self, ctx: &mut Context) -> Option<Register> {
         self.expr.to_assembly(ctx)
     }
 }
 
 impl ToAssembly for Expr {
-    fn to_assembly(&self, ctx: &mut Context) -> String {
-        let code = match self {
+    fn to_assembly(&self, ctx: &mut Context) -> Option<Register> {
+        let res = match self {
             Expr::Binary(l, t, r) => {
-                let left = l.to_assembly(ctx);
-                let right = r.to_assembly(ctx);
+                let left = l.to_assembly(ctx).unwrap();
+                let right = r.to_assembly(ctx).unwrap();
                 let operator = match t {
                     Token::Plus => "add",
                     Token::Minus => "sub",
@@ -49,20 +47,21 @@ impl ToAssembly for Expr {
                     Token::Slash => "div",
                     _ => todo!(),
                 };
-                ctx.add_code(format!("{}\n{}\n{} rax, rbx", left, right, operator));
-                "".to_string()
+                ctx.add_code(format!("{} {}, {}", operator, left, right));
+                ctx.free_register(right);
+                Some(left)
             }
             Expr::Literal(l) => match l {
                 Literal::Num(n) => {
                     let reg = ctx.allocate_register().expect("No registers available");
                     ctx.add_code(format!("mov {}, {}", reg, n));
-                    "".to_string()
-                }
-                _ => todo!(),
+                    Some(reg)
+                },
+                _ => None
             },
-            _ => todo!(),
+            _ => None
         };
-        code
+        res
     }
 }
 
