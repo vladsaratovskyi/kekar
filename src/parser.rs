@@ -1,12 +1,5 @@
 use core::panic;
-
-use crate::{
-    ast::{
-        ArrayExpr, BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt, FunStmt,
-        IfStmt, ImportStmt, Literal, MemberExpr, Param, ReturnStmt, Stmt, Type, VarStmt,
-    },
-    lexer::Token,
-};
+use crate::{ast::*, lexer::Token};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum Binding {
@@ -512,11 +505,7 @@ impl Parser {
 
 mod tests {
     use crate::{
-        ast::{
-            ArrayExpr, BlockStmt, CallExpr, ClassStmt, ComputedExpr, Expr, ExprStmt, ForStmt,
-            FunStmt, IfStmt, ImportStmt, Literal, MemberExpr, Param, ReturnStmt, Stmt, Type,
-            VarStmt,
-        },
+        ast::*,
         lexer::Token,
         parser::{Binding, Parser},
     };
