@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, fmt::Display};
 
 use kekar::{
-    ast::{BlockStmt, Expr, ExprStmt, IfStmt, Literal, Stmt},
+    ast::{BlockStmt, Expr, ExprStmt, ForStmt, IfStmt, Literal, Stmt},
     lexer::Token,
 };
 
@@ -25,6 +25,7 @@ impl ToAssembly for Stmt {
             Stmt::Expr(e) => e.to_assembly(ctx),
             Stmt::If(i) => i.to_assembly(ctx),
             Stmt::Block(b) => b.to_assembly(ctx),
+            Stmt::For(f) => f.to_assembly(ctx),
             _ => None,
         };
         reg
@@ -57,6 +58,55 @@ impl ToAssembly for IfStmt {
         ctx.add_code(format!("{}:", end_label));
 
         dbg!(&ctx.registers);
+        None
+    }
+}
+
+impl ToAssembly for ForStmt {
+    fn to_assembly(&self, ctx: &mut Context) -> Option<Register> {
+        // Allocate registers for the index and the array base address
+        let index_reg = ctx.allocate_register().expect("No registers available");
+        let array_reg = self.iterator.to_assembly(ctx)?;
+
+        // Initialize the index register to 0
+        ctx.add_code(format!("    mov {}, 0", index_reg));
+
+        // Let's assume the array length is known (hard-coded or otherwise)
+        let array_len = match &self.iterator {
+            Expr::Array(arr) => arr.array.len(),
+            _ => panic!("Array length unknown"),
+        };
+
+        let end_label = ctx.generate_named_label("end");
+        let loop_label = ctx.generate_named_label("loop");
+
+        ctx.add_code(format!("{}:", loop_label));
+
+        // Compare index with array length
+        ctx.add_code(format!("    cmp {}, {}", index_reg, array_len));
+        ctx.add_code(format!("    jge {}", end_label));
+
+        let element_reg = ctx.allocate_register().expect("No registers available");
+        // Now the element is in element_reg, and index is in index_reg.
+        // You can generate code for the loop body here, using element_reg and index_reg.
+        // For simplicity, let's just assume we're adding 1 to the element:
+        ctx.add_code(format!("    mov {}, [{} + {} * 4]", element_reg, array_reg, index_reg));
+
+        let modified_element_reg = self.body.to_assembly(ctx);
+
+        // Increment the index
+        ctx.add_code(format!("    inc {}", index_reg));
+
+        // Jump back to the beginning of the loop
+        ctx.add_code(format!("    jmp {}", loop_label));
+
+        // End of the loop
+        ctx.add_code(format!("{}:", end_label));
+
+        ctx.free_register(Some(index_reg));
+        ctx.free_register(Some(array_reg));
+        ctx.free_register(Some(element_reg));
+        ctx.free_register(modified_element_reg);
         None
     }
 }
@@ -97,6 +147,27 @@ impl ToAssembly for Expr {
                 },
                 _ => None
             },
+            Expr::Array(arr) => {
+                let array_label = ctx.generate_named_label("array");
+
+                ctx.add_code(format!("{}:", array_label));
+
+                for element in arr.array.clone() {
+                    match element {
+                        Expr::Literal(n) => {
+                            match n {
+                                Literal::Num(num) => {
+                                    ctx.add_code(format!("    dd {}", num)); // 'dd' for a 32-bit number
+                                },
+                                _ => panic!("Not supported literal"),
+                            }
+                        },
+                        _ => panic!("Array can only contain numbers"),
+                    }
+                }
+
+                Some(Register::Label(array_label))
+            },
             _ => None
         };
         res
@@ -113,6 +184,7 @@ pub enum Register {
     Rdi,
     Esp,
     Ebp,
+    Label(String)
 }
 
 impl Display for Register {
@@ -126,6 +198,7 @@ impl Display for Register {
             Register::Rdi => write!(f, "rdi"),
             Register::Esp => write!(f, "esp"),
             Register::Ebp => write!(f, "ebp"),
+            Register::Label(l) => write!(f, "{}", l),
         }
     }
 }
