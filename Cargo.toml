@@ -5,3 +5,7 @@ edition = "2021"
 authors = ["vlad.saratovskyi@gmail.com"]
 
 [dependencies]
+thiserror = "1"
+
+[dev-dependencies]
+anyhow = "1"
