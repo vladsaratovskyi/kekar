@@ -180,6 +180,14 @@ pub enum Register {
     Rbx,
     Rcx,
     Rdx,
+    R8,
+    R9,
+    R10,
+    R11,
+    R12,
+    R13,
+    R14,
+    R15,
     Rsi,
     Rdi,
     Esp,
@@ -198,6 +206,14 @@ impl Display for Register {
             Register::Rdi => write!(f, "rdi"),
             Register::Esp => write!(f, "esp"),
             Register::Ebp => write!(f, "ebp"),
+            Register::R8 => write!(f, "R8"),
+            Register::R9 => write!(f, "R9"),
+            Register::R10 => write!(f, "R10"),
+            Register::R11 => write!(f, "R11"),
+            Register::R12 => write!(f, "R12"),
+            Register::R13 => write!(f, "R13"),
+            Register::R14 => write!(f, "R14"),
+            Register::R15 => write!(f, "R15"),
             Register::Label(l) => write!(f, "{}", l),
         }
     }
@@ -219,6 +235,14 @@ impl Context {
         deque.push_front(Register::Esp);
         deque.push_front(Register::Rdi);
         deque.push_front(Register::Rsi);
+        deque.push_front(Register::R15);
+        deque.push_front(Register::R14);
+        deque.push_front(Register::R13);
+        deque.push_front(Register::R12);
+        deque.push_front(Register::R11);
+        deque.push_front(Register::R10);
+        deque.push_front(Register::R9);
+        deque.push_front(Register::R8);
         deque.push_front(Register::Rdx);
         deque.push_front(Register::Rcx);
         deque.push_front(Register::Rbx);
