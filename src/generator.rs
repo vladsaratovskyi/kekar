@@ -44,20 +44,22 @@ impl ToAssembly for IfStmt {
         let else_label = ctx.generate_named_label("else");
         let end_label = ctx.generate_label();
 
-        ctx.add_code(format!("    cmp {}, 0", cond_reg));
-        ctx.add_code(format!("    je {}", else_label));
+        ctx.emit(Instruction::op(
+            "cmp",
+            vec![cond_reg.to_string(), "0".to_string()],
+        ));
+        ctx.emit(Instruction::op("je", vec![else_label.clone()]));
         ctx.free_register(Some(cond_reg));
 
         let then_reg = self.then_block.to_assembly(ctx);
         ctx.free_register(then_reg);
-        ctx.add_code(format!("    jmp {}", end_label));
-        ctx.add_code(format!("{}:", else_label));
-        
+        ctx.emit(Instruction::op("jmp", vec![end_label.clone()]));
+        ctx.emit(Instruction::label(else_label.clone()));
+
         let else_reg = self.else_block.to_assembly(ctx);
         ctx.free_register(else_reg);
-        ctx.add_code(format!("{}:", end_label));
+        ctx.emit(Instruction::label(end_label));
 
-        dbg!(&ctx.registers);
         None
     }
 }
@@ -69,7 +71,10 @@ impl ToAssembly for ForStmt {
         let array_reg = self.iterator.to_assembly(ctx)?;
 
         // Initialize the index register to 0
-        ctx.add_code(format!("    mov {}, 0", index_reg));
+        ctx.emit(Instruction::op(
+            "mov",
+            vec![index_reg.to_string(), "0".to_string()],
+        ));
 
         // Let's assume the array length is known (hard-coded or otherwise)
         let array_len = match &self.iterator {
@@ -80,28 +85,34 @@ impl ToAssembly for ForStmt {
         let end_label = ctx.generate_named_label("end");
         let loop_label = ctx.generate_named_label("loop");
 
-        ctx.add_code(format!("{}:", loop_label));
+        ctx.emit(Instruction::label(loop_label.clone()));
 
         // Compare index with array length
-        ctx.add_code(format!("    cmp {}, {}", index_reg, array_len));
-        ctx.add_code(format!("    jge {}", end_label));
+        ctx.emit(Instruction::op(
+            "cmp",
+            vec![index_reg.to_string(), array_len.to_string()],
+        ));
+        ctx.emit(Instruction::op("jge", vec![end_label.clone()]));
 
         let element_reg = ctx.allocate_register().expect("No registers available");
         // Now the element is in element_reg, and index is in index_reg.
         // You can generate code for the loop body here, using element_reg and index_reg.
         // For simplicity, let's just assume we're adding 1 to the element:
-        ctx.add_code(format!("    mov {}, [{} + {} * 4]", element_reg, array_reg, index_reg));
+        ctx.emit(Instruction::raw(format!(
+            "    mov {}, [{} + {} * 4]",
+            element_reg, array_reg, index_reg
+        )));
 
         let modified_element_reg = self.body.to_assembly(ctx);
 
         // Increment the index
-        ctx.add_code(format!("    inc {}", index_reg));
+        ctx.emit(Instruction::op("inc", vec![index_reg.to_string()]));
 
         // Jump back to the beginning of the loop
-        ctx.add_code(format!("    jmp {}", loop_label));
+        ctx.emit(Instruction::op("jmp", vec![loop_label.clone()]));
 
         // End of the loop
-        ctx.add_code(format!("{}:", end_label));
+        ctx.emit(Instruction::label(end_label.clone()));
 
         ctx.free_register(Some(index_reg));
         ctx.free_register(Some(array_reg));
@@ -124,16 +135,19 @@ impl ToAssembly for Expr {
                     Token::Slash => "div",
                     _ => todo!(),
                 };
-                ctx.add_code(format!("    {} {}, {}", operator, left, right));
+                ctx.emit(Instruction::op(
+                    operator,
+                    vec![left.to_string(), right.to_string()],
+                ));
                 ctx.free_register(Some(right));
                 Some(left)
-            },
+            }
             Expr::Literal(l) => match l {
                 Literal::Num(n) => {
                     let reg = ctx.allocate_register().expect("No registers available");
-                    ctx.add_code(format!("    mov {}, {}", reg, n));
+                    ctx.emit(Instruction::op("mov", vec![reg.to_string(), n.to_string()]));
                     Some(reg)
-                },
+                }
                 Literal::Bool(b) => {
                     let mut n = 1;
 
@@ -142,33 +156,31 @@ impl ToAssembly for Expr {
                     }
 
                     let reg = ctx.allocate_register().expect("No registers available");
-                    ctx.add_code(format!("    mov {}, {}", reg, n));
+                    ctx.emit(Instruction::op("mov", vec![reg.to_string(), n.to_string()]));
                     Some(reg)
-                },
-                _ => None
+                }
+                _ => None,
             },
             Expr::Array(arr) => {
                 let array_label = ctx.generate_named_label("array");
 
-                ctx.add_code(format!("{}:", array_label));
+                ctx.emit(Instruction::label(array_label.clone()));
 
                 for element in arr.array.clone() {
                     match element {
-                        Expr::Literal(n) => {
-                            match n {
-                                Literal::Num(num) => {
-                                    ctx.add_code(format!("    dd {}", num)); // 'dd' for a 32-bit number
-                                },
-                                _ => panic!("Not supported literal"),
+                        Expr::Literal(n) => match n {
+                            Literal::Num(num) => {
+                                ctx.emit(Instruction::raw(format!("    dd {}", num)));
                             }
+                            _ => panic!("Not supported literal"),
                         },
                         _ => panic!("Array can only contain numbers"),
                     }
                 }
 
                 Some(Register::Label(array_label))
-            },
-            _ => None
+            }
+            _ => None,
         };
         res
     }
@@ -192,7 +204,7 @@ pub enum Register {
     Rdi,
     Esp,
     Ebp,
-    Label(String)
+    Label(String),
 }
 
 impl Display for Register {
@@ -220,10 +232,53 @@ impl Display for Register {
 }
 
 #[derive(Debug)]
+pub enum Instruction {
+    Operation {
+        opcode: String,
+        operands: Vec<String>,
+    },
+    Label(String),
+    Raw(String),
+}
+
+impl Instruction {
+    pub fn op(opcode: &str, operands: Vec<String>) -> Self {
+        Self::Operation {
+            opcode: opcode.to_string(),
+            operands,
+        }
+    }
+
+    pub fn label(label: String) -> Self {
+        Self::Label(label)
+    }
+
+    pub fn raw<S: Into<String>>(s: S) -> Self {
+        Self::Raw(s.into())
+    }
+}
+
+impl Display for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Instruction::Operation { opcode, operands } => {
+                if operands.is_empty() {
+                    write!(f, "    {}", opcode)
+                } else {
+                    write!(f, "    {} {}", opcode, operands.join(", "))
+                }
+            }
+            Instruction::Label(label) => write!(f, "{}:", label),
+            Instruction::Raw(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Context {
     next_label: usize,
     registers: VecDeque<Register>,
-    code: Vec<String>,
+    code: Vec<Instruction>,
 }
 
 pub struct AsmGenerator {}
@@ -266,8 +321,8 @@ impl Context {
         label
     }
 
-    pub fn add_code(&mut self, code: String) {
-        self.code.push(code);
+    pub fn emit(&mut self, instr: Instruction) {
+        self.code.push(instr);
     }
 
     pub fn allocate_register(&mut self) -> Option<Register> {
@@ -277,12 +332,16 @@ impl Context {
     pub fn free_register(&mut self, reg: Option<Register>) {
         match reg {
             Some(r) => self.registers.push_front(r),
-            _ => ()
+            _ => (),
         }
     }
 
     pub fn finalize(self) -> String {
-        self.code.join("\n")
+        self.code
+            .into_iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -293,13 +352,19 @@ impl AsmGenerator {
 
     pub fn generate_asm(&self, program: BlockStmt) -> String {
         let mut ctx = Context::new();
-        ctx.add_code("section .text".to_string());
-        ctx.add_code("    global _start\n".to_string());
-        ctx.add_code("_start:".to_string());
+        ctx.emit(Instruction::raw("section .text"));
+        ctx.emit(Instruction::raw("global _start"));
+        ctx.emit(Instruction::label("_start".to_string()));
         program.to_assembly(&mut ctx);
-        ctx.add_code("    mov eax, 60".to_string());
-        ctx.add_code("    xor edi, edi".to_string());
-        ctx.add_code("    syscall".to_string());
+        ctx.emit(Instruction::op(
+            "mov",
+            vec!["eax".to_string(), "60".to_string()],
+        ));
+        ctx.emit(Instruction::op(
+            "xor",
+            vec!["edi".to_string(), "edi".to_string()],
+        ));
+        ctx.emit(Instruction::op("syscall", Vec::new()));
 
         ctx.finalize()
     }
