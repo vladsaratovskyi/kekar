@@ -1,7 +1,7 @@
 # Kek v1 Implementation Checklist
 
 Status date: `2026-02-11`  
-Last updated for commit: `b3b7f50`
+Last updated for commit: `8ab36ff`
 
 ## Stage 1: Freeze grammar + compatibility rules
 - [x] Freeze v1 grammar and compatibility contract in `/Users/vlad/workspace/rusty/kekar/docs/kek-v1.md`
@@ -30,10 +30,10 @@ Last updated for commit: `b3b7f50`
 - [x] Validate function signatures, return typing, call argument typing
 - [x] Add baseline handling for new statement kinds to keep analysis exhaustive
 - [x] Add baseline `match` analysis with arm scopes and pattern bindings
-- [ ] Enforce module/import resolution semantics (`mod`/`use`/`import`)
-- [ ] Enforce `struct`/`enum`/`impl` member and method typing rules
-- [ ] Enforce match exhaustiveness and pattern type compatibility
-- [ ] Add visibility/access control semantics for `pub`
+- [x] Enforce module/import resolution semantics (`mod`/`use`/`import`)
+- [x] Enforce `struct`/`enum`/`impl` member and method typing rules
+- [x] Enforce match exhaustiveness and pattern type compatibility
+- [x] Add visibility/access control semantics for `pub`
 
 ## Stage 5: Code generation alignment
 - [x] JS generator handles new AST variants (including import alias emission and placeholder lowering for module/type declarations)
@@ -42,8 +42,12 @@ Last updated for commit: `b3b7f50`
 - [ ] Lower `match` to executable JS/ASM control flow instead of comments/placeholders
 - [ ] Lower `struct`/`enum`/`impl` into stable runtime representation in both backends
 
-## Stage 6: Self-hosting readiness gap
-- [ ] Module system and symbol resolution robust enough for multi-file compiler project layout
-- [ ] Full type system behavior for user-defined types and methods
-- [ ] Diagnostics policy for compatibility warnings and future strict mode
-- [ ] Stable IR/codegen behavior required by compiler-in-kek bootstrap
+## Stage 6: Self-hosting readiness
+- [x] Semantic guardrails exist for module/use/import declarations, user-defined types, impl methods, match coverage, and `pub` visibility
+- [x] Core frontend pipeline (lexer/parser/sema) supports v1 declaration surface needed by a compiler frontend codebase
+- [ ] Real multi-file module loading and path-based symbol resolution (filesystem-backed, cross-file linking)
+- [ ] Namespace-aware method call resolution for impl methods and visibility across module boundaries
+- [ ] Full user-type semantics needed for bootstrap-scale code (constructor/value typing strategy, richer class/enum runtime model)
+- [ ] Compatibility diagnostics policy implemented in compiler output (warnings + migration hints)
+- [ ] Backend lowering parity for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable JS/ASM output
+- [ ] Bootstrap milestone: compile a non-trivial Kek program in Kek (self-host stage-0 target)
