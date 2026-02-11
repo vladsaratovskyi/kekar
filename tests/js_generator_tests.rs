@@ -88,3 +88,68 @@ class Counter {
     assert!(output.contains("init() {"));
     assert!(output.contains("this.value = 1;"));
 }
+
+#[test]
+fn lowers_struct_enum_impl_and_match_to_executable_js() {
+    let source = r#"
+struct Point {
+    x: Num;
+    y: Num;
+}
+
+enum Maybe {
+    Some(Num),
+    Empty
+}
+
+impl Point {
+    fun len() -> Num {
+        return this.x;
+    }
+}
+
+fun unwrap(value: Maybe) -> Num {
+    match value {
+        Some(v) => { return v; },
+        Empty() => { return 0; }
+    }
+    return 0;
+}
+"#;
+
+    let output = compile_to_js(source);
+
+    assert!(output.contains("class Point {"));
+    assert!(output.contains("constructor(x, y) {"));
+    assert!(output.contains("this.x = x;"));
+    assert!(output.contains("const Maybe = Object.freeze({"));
+    assert!(
+        output.contains("Some: (arg0) => ({ __enum: \"Maybe\", tag: \"Some\", args: [arg0] }),")
+    );
+    assert!(output.contains("const Empty = Maybe.Empty;"));
+    assert!(output.contains("Point.prototype.len = function() {"));
+    assert!(output.contains("const __kek_match_value_0 = value;"));
+    assert!(output.contains("__kek_match_value_0.tag === \"Some\""));
+    assert!(output.contains("const v = __kek_match_value_0.args[0];"));
+    assert!(output.contains("throw new Error(\"Non-exhaustive match\");"));
+}
+
+#[test]
+fn lowers_literal_match_without_placeholder_comments() {
+    let source = r#"
+fun main() -> Num {
+    var x: Num = 1;
+    match x {
+        1 => { return 10; },
+        _ => { return 0; }
+    }
+}
+"#;
+
+    let output = compile_to_js(source);
+
+    assert!(!output.contains("// match"));
+    assert!(output.contains("const __kek_match_value_0 = x;"));
+    assert!(output.contains("if (!__kek_match_done_0 && (__kek_match_value_0 === 1)) {"));
+    assert!(output.contains("else if (!__kek_match_done_0 && (true)) {"));
+}

@@ -1,7 +1,7 @@
 # Kek v1 Implementation Checklist
 
 Status date: `2026-02-11`  
-Last updated for commit: `8ab36ff`
+Last updated for commit: `working tree (uncommitted)`
 
 ## Stage 1: Freeze grammar + compatibility rules
 - [x] Freeze v1 grammar and compatibility contract in `/Users/vlad/workspace/rusty/kekar/docs/kek-v1.md`
@@ -39,8 +39,8 @@ Last updated for commit: `8ab36ff`
 - [x] JS generator handles new AST variants (including import alias emission and placeholder lowering for module/type declarations)
 - [x] ASM generator made exhaustive for new AST variants (unsupported constructs safely ignored with comments)
 - [x] Ensure `pub fun main` is recognized for ASM entrypoint generation
-- [ ] Lower `match` to executable JS/ASM control flow instead of comments/placeholders
-- [ ] Lower `struct`/`enum`/`impl` into stable runtime representation in both backends
+- [x] Lower `match` to executable JS/ASM control flow instead of comments/placeholders
+- [x] Lower `struct`/`enum`/`impl` into stable runtime representation in both backends
 
 ## Stage 6: Self-hosting readiness
 - [x] Semantic guardrails exist for module/use/import declarations, user-defined types, impl methods, match coverage, and `pub` visibility
@@ -49,5 +49,5 @@ Last updated for commit: `8ab36ff`
 - [ ] Namespace-aware method call resolution for impl methods and visibility across module boundaries
 - [ ] Full user-type semantics needed for bootstrap-scale code (constructor/value typing strategy, richer class/enum runtime model)
 - [ ] Compatibility diagnostics policy implemented in compiler output (warnings + migration hints)
-- [ ] Backend lowering parity for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable JS/ASM output
+- [x] Backend lowering parity for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable JS/ASM output
 - [ ] Bootstrap milestone: compile a non-trivial Kek program in Kek (self-host stage-0 target)

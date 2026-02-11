@@ -1,7 +1,9 @@
+use std::collections::HashSet;
+
 use crate::{
     ast::{
-        BlockStmt, ConstStmt, EnumStmt, Expr, ForStmt, FunStmt, IfStmt, ImportStmt, Literal,
-        MatchStmt, ModStmt, Pattern, Stmt, StructStmt, UseStmt, VarStmt, WhileStmt,
+        BlockStmt, ConstStmt, EnumStmt, Expr, ForStmt, FunStmt, IfStmt, ImplStmt, ImportStmt,
+        Literal, MatchStmt, ModStmt, Pattern, Stmt, StructStmt, UseStmt, VarStmt, WhileStmt,
     },
     lexer::Token,
 };
@@ -27,6 +29,7 @@ impl JsGenerator {
 struct Emitter {
     out: String,
     indent: usize,
+    match_counter: usize,
 }
 
 impl Emitter {
@@ -34,6 +37,7 @@ impl Emitter {
         Self {
             out: String::new(),
             indent: 0,
+            match_counter: 0,
         }
     }
 
@@ -60,15 +64,7 @@ impl Emitter {
             Stmt::Import(import_stmt) => self.emit_import(import_stmt),
             Stmt::Struct(struct_stmt) => self.emit_struct(struct_stmt),
             Stmt::Enum(enum_stmt) => self.emit_enum(enum_stmt),
-            Stmt::Impl(impl_stmt) => {
-                self.line(&format!("// impl {} {{", impl_stmt.name));
-                self.indent += 1;
-                for method in &impl_stmt.methods {
-                    self.emit_stmt(method, false);
-                }
-                self.indent -= 1;
-                self.line("// }");
-            }
+            Stmt::Impl(impl_stmt) => self.emit_impl(impl_stmt),
             Stmt::Class(class_stmt) => {
                 self.line(&format!("class {} {{", class_stmt.name));
                 self.indent += 1;
@@ -136,28 +132,95 @@ impl Emitter {
     fn emit_struct(&mut self, struct_stmt: &StructStmt) {
         self.line(&format!("class {} {{", struct_stmt.name));
         self.indent += 1;
+
+        let params = struct_stmt
+            .fields
+            .iter()
+            .map(|field| field.name.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        self.line(&format!("constructor({}) {{", params));
+        self.indent += 1;
         for field in &struct_stmt.fields {
-            self.line(&format!("{};", field.name));
+            self.line(&format!("this.{0} = {0};", field.name));
         }
+        self.indent -= 1;
+        self.line("}");
+
         self.indent -= 1;
         self.line("}");
     }
 
     fn emit_enum(&mut self, enum_stmt: &EnumStmt) {
-        self.line(&format!("const {} = {{", enum_stmt.name));
+        self.line(&format!("const {} = Object.freeze({{", enum_stmt.name));
         self.indent += 1;
+        let mut aliases = Vec::new();
         for variant in &enum_stmt.variants {
-            if variant.arguments.is_empty() {
-                self.line(&format!("{}: \"{}\",", variant.name, variant.name));
+            let arg_names = (0..variant.arguments.len())
+                .map(|index| format!("arg{}", index))
+                .collect::<Vec<_>>();
+            let params = if arg_names.is_empty() {
+                String::new()
             } else {
-                self.line(&format!(
-                    "{}: (...args) => ({{ tag: \"{}\", args }}),",
-                    variant.name, variant.name
-                ));
-            }
+                arg_names.join(", ")
+            };
+            let args_value = if arg_names.is_empty() {
+                "[]".to_string()
+            } else {
+                format!("[{}]", arg_names.join(", "))
+            };
+            self.line(&format!(
+                "{}: ({}) => ({{ __enum: \"{}\", tag: \"{}\", args: {} }}),",
+                variant.name, params, enum_stmt.name, variant.name, args_value
+            ));
+            aliases.push(format!(
+                "const {} = {}.{};",
+                variant.name, enum_stmt.name, variant.name
+            ));
         }
         self.indent -= 1;
-        self.line("};");
+        self.line("});");
+        for alias in aliases {
+            self.line(&alias);
+        }
+    }
+
+    fn emit_impl(&mut self, impl_stmt: &ImplStmt) {
+        for method in &impl_stmt.methods {
+            let method_fun = match method {
+                Stmt::Fun(fun_stmt) => Some(fun_stmt),
+                Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                    Stmt::Fun(fun_stmt) => Some(fun_stmt),
+                    _ => None,
+                },
+                _ => None,
+            };
+
+            let Some(fun_stmt) = method_fun else {
+                continue;
+            };
+
+            let params = fun_stmt
+                .params
+                .iter()
+                .map(|p| p.name.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            self.line(&format!(
+                "{}.prototype.{} = function({}) {{",
+                impl_stmt.name, fun_stmt.name, params
+            ));
+            self.indent += 1;
+            if let Stmt::Block(block) = fun_stmt.block.as_ref() {
+                for stmt in &block.stmts {
+                    self.emit_stmt(stmt, false);
+                }
+            }
+            self.indent -= 1;
+            self.line("};");
+        }
     }
 
     fn emit_fun(&mut self, fun_stmt: &FunStmt, in_class: bool) {
@@ -229,17 +292,53 @@ impl Emitter {
     }
 
     fn emit_match(&mut self, match_stmt: &MatchStmt, in_class: bool) {
+        let match_id = self.match_counter;
+        self.match_counter += 1;
+
+        let value_name = format!("__kek_match_value_{}", match_id);
+        let matched_name = format!("__kek_match_done_{}", match_id);
+
+        self.line("{");
+        self.indent += 1;
         self.line(&format!(
-            "// match {} {{",
+            "const {} = {};",
+            value_name,
             self.expr_to_js(&match_stmt.expr)
         ));
-        self.indent += 1;
-        for arm in &match_stmt.arms {
-            self.line(&format!("// arm {}", self.pattern_to_js(&arm.pattern)));
-            self.emit_stmt(arm.body.as_ref(), in_class);
+        self.line(&format!("let {} = false;", matched_name));
+
+        for (index, arm) in match_stmt.arms.iter().enumerate() {
+            let mut bindings = Vec::new();
+            let condition = self.pattern_condition_to_js(&arm.pattern, &value_name, &mut bindings);
+
+            if index == 0 {
+                self.line(&format!("if (!{} && ({})) {{", matched_name, condition));
+            } else {
+                self.line(&format!(
+                    "else if (!{} && ({})) {{",
+                    matched_name, condition
+                ));
+            }
+            self.indent += 1;
+            self.line(&format!("{} = true;", matched_name));
+            let mut declared = HashSet::new();
+            for (name, expr) in bindings {
+                if declared.insert(name.clone()) {
+                    self.line(&format!("const {} = {};", name, expr));
+                }
+            }
+            self.emit_stmt_block_contents(arm.body.as_ref(), in_class);
+            self.indent -= 1;
+            self.line("}");
         }
+
+        self.line(&format!("if (!{}) {{", matched_name));
+        self.indent += 1;
+        self.line("throw new Error(\"Non-exhaustive match\");");
         self.indent -= 1;
-        self.line("// }");
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
     }
 
     fn emit_while(&mut self, while_stmt: &WhileStmt, in_class: bool) {
@@ -376,6 +475,7 @@ impl Emitter {
         }
     }
 
+    #[allow(dead_code)]
     fn pattern_to_js(&self, pattern: &Pattern) -> String {
         match pattern {
             Pattern::Wildcard => "_".to_string(),
@@ -388,6 +488,44 @@ impl Emitter {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("{}({})", name, inner)
+            }
+        }
+    }
+
+    fn pattern_condition_to_js(
+        &self,
+        pattern: &Pattern,
+        value_expr: &str,
+        bindings: &mut Vec<(String, String)>,
+    ) -> String {
+        match pattern {
+            Pattern::Wildcard => "true".to_string(),
+            Pattern::Literal(literal) => {
+                format!("{} === {}", value_expr, self.literal_to_js(literal))
+            }
+            Pattern::Identifier(name) => {
+                bindings.push((name.clone(), value_expr.to_string()));
+                "true".to_string()
+            }
+            Pattern::Variant(name, nested) => {
+                let mut parts = vec![
+                    format!("{} !== null", value_expr),
+                    format!("typeof {} === \"object\"", value_expr),
+                    format!("{}.tag === \"{}\"", value_expr, name),
+                    format!("Array.isArray({}.args)", value_expr),
+                    format!("{}.args.length === {}", value_expr, nested.len()),
+                ];
+
+                for (index, nested_pattern) in nested.iter().enumerate() {
+                    let nested_value = format!("{}.args[{}]", value_expr, index);
+                    parts.push(self.pattern_condition_to_js(
+                        nested_pattern,
+                        &nested_value,
+                        bindings,
+                    ));
+                }
+
+                parts.join(" && ")
             }
         }
     }
@@ -418,8 +556,9 @@ mod tests {
     use super::{escape_js_char, escape_js_string, Emitter, JsGenerator};
     use crate::{
         ast::{
-            BlockStmt, ClassStmt, Expr, FunStmt, ImportStmt, Literal, MemberExpr, Param,
-            ReturnStmt, Stmt, Type, VarStmt,
+            BlockStmt, ClassStmt, EnumStmt, EnumVariant, Expr, FunStmt, ImplStmt, ImportStmt,
+            Literal, MatchArm, MatchStmt, MemberExpr, Param, Pattern, ReturnStmt, Stmt, Type,
+            VarStmt,
         },
         lexer::Token,
     };
@@ -525,5 +664,111 @@ mod tests {
         emitter.emit_var(&var_stmt, true);
 
         assert_eq!(emitter.finish(), "let count;\ncount;\n");
+    }
+
+    #[test]
+    fn pattern_condition_variant_binds_nested_value_and_checks_tag() {
+        let emitter = Emitter::new();
+        let mut bindings = Vec::new();
+
+        let condition = emitter.pattern_condition_to_js(
+            &Pattern::Variant(
+                "Some".to_string(),
+                vec![
+                    Pattern::Identifier("value".to_string()),
+                    Pattern::Literal(Literal::Num(1.0)),
+                ],
+            ),
+            "__candidate",
+            &mut bindings,
+        );
+
+        assert!(condition.contains("__candidate.tag === \"Some\""));
+        assert!(condition.contains("__candidate.args.length === 2"));
+        assert!(condition.contains("__candidate.args[1] === 1"));
+        assert_eq!(
+            bindings,
+            vec![("value".to_string(), "__candidate.args[0]".to_string())]
+        );
+    }
+
+    #[test]
+    fn emit_enum_and_impl_create_runtime_artifacts() {
+        let mut emitter = Emitter::new();
+
+        emitter.emit_stmt(
+            &Stmt::Enum(EnumStmt {
+                name: "Maybe".to_string(),
+                variants: vec![
+                    EnumVariant {
+                        name: "Some".to_string(),
+                        arguments: vec![Type::Num],
+                    },
+                    EnumVariant {
+                        name: "Empty".to_string(),
+                        arguments: vec![],
+                    },
+                ],
+            }),
+            false,
+        );
+
+        emitter.emit_stmt(
+            &Stmt::Impl(ImplStmt {
+                name: "Point".to_string(),
+                methods: vec![Stmt::Fun(FunStmt {
+                    name: "value".to_string(),
+                    return_type: Type::Num,
+                    params: vec![],
+                    block: Box::new(Stmt::Block(BlockStmt {
+                        stmts: vec![Stmt::Return(ReturnStmt {
+                            return_expr: Expr::Literal(Literal::Num(1.0)),
+                        })],
+                    })),
+                })],
+            }),
+            false,
+        );
+
+        let output = emitter.finish();
+
+        assert!(output.contains("const Maybe = Object.freeze({"));
+        assert!(output.contains("const Some = Maybe.Some;"));
+        assert!(output.contains("const Empty = Maybe.Empty;"));
+        assert!(output.contains("Point.prototype.value = function() {"));
+    }
+
+    #[test]
+    fn emit_match_lowers_to_if_else_chain() {
+        let mut emitter = Emitter::new();
+        emitter.emit_stmt(
+            &Stmt::Match(MatchStmt {
+                expr: Expr::Literal(Literal::Identifier("x".to_string())),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Num(1.0)),
+                        body: Box::new(Stmt::Block(BlockStmt {
+                            stmts: vec![Stmt::Return(ReturnStmt {
+                                return_expr: Expr::Literal(Literal::Num(10.0)),
+                            })],
+                        })),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        body: Box::new(Stmt::Block(BlockStmt {
+                            stmts: vec![Stmt::Return(ReturnStmt {
+                                return_expr: Expr::Literal(Literal::Num(0.0)),
+                            })],
+                        })),
+                    },
+                ],
+            }),
+            false,
+        );
+
+        let output = emitter.finish();
+        assert!(output.contains("const __kek_match_value_0 = x;"));
+        assert!(output.contains("if (!__kek_match_done_0 && (__kek_match_value_0 === 1)) {"));
+        assert!(output.contains("else if (!__kek_match_done_0 && (true)) {"));
     }
 }

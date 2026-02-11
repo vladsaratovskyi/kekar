@@ -1465,9 +1465,10 @@ mod tests {
 
         analyzer.validate_use_bindings();
 
-        assert!(analyzer.errors.iter().any(|err| err
-            .message
-            .contains("Unresolved use path root 'missing'")));
+        assert!(analyzer
+            .errors
+            .iter()
+            .any(|err| err.message.contains("Unresolved use path root 'missing'")));
     }
 
     #[test]

@@ -460,7 +460,10 @@ fun main() -> Num {
 }
 "#;
 
-    assert_has_error(source, "Cannot declare public impl for private type 'Hidden'");
+    assert_has_error(
+        source,
+        "Cannot declare public impl for private type 'Hidden'",
+    );
 }
 
 #[test]

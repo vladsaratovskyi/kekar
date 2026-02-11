@@ -2,27 +2,35 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::{
     ast::{
-        BlockStmt, ConstStmt, Expr, ForStmt, FunStmt, IfStmt, Literal, Stmt, VarStmt, WhileStmt,
+        BlockStmt, ConstStmt, EnumStmt, Expr, ForStmt, FunStmt, IfStmt, Literal, MatchStmt,
+        Pattern, Stmt, StructStmt, VarStmt, WhileStmt,
     },
     lexer::Token,
 };
 
 pub struct AsmGenerator {
     label_counter: usize,
+    enum_variant_tags: HashMap<String, i64>,
 }
 
 impl AsmGenerator {
     pub fn new() -> Self {
-        Self { label_counter: 0 }
+        Self {
+            label_counter: 0,
+            enum_variant_tags: HashMap::new(),
+        }
     }
 
     pub fn generate(&mut self, program: &BlockStmt) -> String {
-        let mut lines = vec![
+        self.enum_variant_tags = self.collect_enum_variant_tags(program);
+
+        let mut text_lines = vec![
             "section .text".to_string(),
             "    global _start".to_string(),
             String::new(),
             "_start:".to_string(),
         ];
+        let mut rodata_lines = vec!["section .rodata".to_string()];
 
         let has_main = program.stmts.iter().any(|stmt| match stmt {
             Stmt::Fun(fun) => fun.name == "main",
@@ -33,47 +41,135 @@ impl AsmGenerator {
         });
 
         if has_main {
-            lines.push("    call main".to_string());
-            lines.push("    mov rdi, rax".to_string());
+            text_lines.push("    call main".to_string());
+            text_lines.push("    mov rdi, rax".to_string());
         } else {
-            lines.push("    mov rdi, 0".to_string());
+            text_lines.push("    mov rdi, 0".to_string());
         }
 
-        lines.push("    mov rax, 60".to_string());
-        lines.push("    syscall".to_string());
-        lines.push(String::new());
+        text_lines.push("    mov rax, 60".to_string());
+        text_lines.push("    syscall".to_string());
+        text_lines.push(String::new());
 
         for stmt in &program.stmts {
-            match stmt {
-                Stmt::Fun(fun_stmt) => self.emit_function(fun_stmt, &mut lines),
-                Stmt::Import(_) => {
-                    lines.push("; import statement ignored by asm backend".to_string())
-                }
+            self.emit_top_level_stmt(stmt, &mut text_lines, &mut rodata_lines);
+        }
+
+        if rodata_lines.len() > 1 {
+            text_lines.push(String::new());
+            text_lines.append(&mut rodata_lines);
+        }
+
+        text_lines.join("\n")
+    }
+
+    fn emit_top_level_stmt(
+        &mut self,
+        stmt: &Stmt,
+        text_lines: &mut Vec<String>,
+        rodata_lines: &mut Vec<String>,
+    ) {
+        match stmt {
+            Stmt::Pub(pub_stmt) => {
+                self.emit_top_level_stmt(pub_stmt.stmt.as_ref(), text_lines, rodata_lines)
+            }
+            Stmt::Fun(fun_stmt) => self.emit_function(fun_stmt, text_lines),
+            Stmt::Import(_) => {
+                text_lines.push("; import statement ignored by asm backend".to_string())
+            }
+            Stmt::Mod(_) => text_lines.push("; mod statement ignored by asm backend".to_string()),
+            Stmt::Use(_) => text_lines.push("; use statement ignored by asm backend".to_string()),
+            Stmt::Class(_) => {
+                text_lines.push("; class statement ignored by asm backend".to_string())
+            }
+            Stmt::Const(_) => {
+                text_lines.push("; top-level const ignored by asm backend".to_string())
+            }
+            Stmt::Struct(struct_stmt) => self.emit_struct_metadata(struct_stmt, rodata_lines),
+            Stmt::Enum(enum_stmt) => self.emit_enum_metadata(enum_stmt, rodata_lines),
+            Stmt::Impl(impl_stmt) => self.emit_impl(impl_stmt, text_lines, rodata_lines),
+            Stmt::Match(_) => {
+                text_lines.push("; top-level match ignored by asm backend".to_string())
+            }
+            _ => text_lines.push("; top-level statement ignored by asm backend".to_string()),
+        }
+    }
+
+    fn emit_impl(
+        &mut self,
+        impl_stmt: &crate::ast::ImplStmt,
+        text_lines: &mut Vec<String>,
+        rodata_lines: &mut Vec<String>,
+    ) {
+        let mut method_labels = Vec::new();
+        for method in &impl_stmt.methods {
+            let method_fun = match method {
+                Stmt::Fun(fun_stmt) => Some(fun_stmt),
                 Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
-                    Stmt::Fun(fun_stmt) => self.emit_function(fun_stmt, &mut lines),
-                    _ => lines.push("; pub statement ignored by asm backend".to_string()),
+                    Stmt::Fun(fun_stmt) => Some(fun_stmt),
+                    _ => None,
                 },
-                Stmt::Mod(_) => lines.push("; mod statement ignored by asm backend".to_string()),
-                Stmt::Use(_) => lines.push("; use statement ignored by asm backend".to_string()),
-                Stmt::Class(_) => {
-                    lines.push("; class statement ignored by asm backend".to_string())
-                }
-                Stmt::Const(_) => {
-                    lines.push("; top-level const ignored by asm backend".to_string())
-                }
-                Stmt::Struct(_) => {
-                    lines.push("; struct statement ignored by asm backend".to_string())
-                }
-                Stmt::Enum(_) => lines.push("; enum statement ignored by asm backend".to_string()),
-                Stmt::Impl(_) => lines.push("; impl statement ignored by asm backend".to_string()),
-                Stmt::Match(_) => {
-                    lines.push("; match statement ignored by asm backend".to_string())
-                }
-                _ => lines.push("; top-level statement ignored by asm backend".to_string()),
+                _ => None,
+            };
+
+            let Some(fun_stmt) = method_fun else {
+                continue;
+            };
+
+            let mut lowered = fun_stmt.clone();
+            lowered.name = format!("{}__{}", impl_stmt.name, fun_stmt.name);
+            method_labels.push(lowered.name.clone());
+            self.emit_function(&lowered, text_lines);
+        }
+
+        rodata_lines.push(format!("__kek_impl_{}:", impl_stmt.name));
+        rodata_lines.push(format!("    dq {}", method_labels.len()));
+        for method_label in method_labels {
+            rodata_lines.push(format!("    dq {}", method_label));
+        }
+    }
+
+    fn emit_struct_metadata(&self, struct_stmt: &StructStmt, rodata_lines: &mut Vec<String>) {
+        rodata_lines.push(format!("__kek_struct_{}:", struct_stmt.name));
+        rodata_lines.push(format!("    dq {}", struct_stmt.fields.len()));
+        for field in &struct_stmt.fields {
+            rodata_lines.push(format!("    dq 0 ; field {}", field.name));
+        }
+    }
+
+    fn emit_enum_metadata(&self, enum_stmt: &EnumStmt, rodata_lines: &mut Vec<String>) {
+        rodata_lines.push(format!("__kek_enum_{}:", enum_stmt.name));
+        rodata_lines.push(format!("    dq {}", enum_stmt.variants.len()));
+        for (index, variant) in enum_stmt.variants.iter().enumerate() {
+            rodata_lines.push(format!("__kek_enum_{}_{}:", enum_stmt.name, variant.name));
+            rodata_lines.push(format!("    dq {}", index));
+            rodata_lines.push(format!("    dq {}", variant.arguments.len()));
+        }
+    }
+
+    fn collect_enum_variant_tags(&self, program: &BlockStmt) -> HashMap<String, i64> {
+        let mut tags = HashMap::new();
+
+        for stmt in &program.stmts {
+            let enum_stmt = match stmt {
+                Stmt::Enum(enum_stmt) => Some(enum_stmt),
+                Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                    Stmt::Enum(enum_stmt) => Some(enum_stmt),
+                    _ => None,
+                },
+                _ => None,
+            };
+
+            let Some(enum_stmt) = enum_stmt else {
+                continue;
+            };
+
+            for (index, variant) in enum_stmt.variants.iter().enumerate() {
+                tags.entry(variant.name.clone()).or_insert(index as i64);
             }
         }
 
-        lines.join("\n")
+        tags
     }
 
     fn emit_function(&mut self, fun_stmt: &FunStmt, lines: &mut Vec<String>) {
@@ -142,6 +238,7 @@ impl AsmGenerator {
             Stmt::If(if_stmt) => self.emit_if(if_stmt, ctx, lines),
             Stmt::While(while_stmt) => self.emit_while(while_stmt, ctx, lines),
             Stmt::For(for_stmt) => self.emit_for(for_stmt, ctx, lines),
+            Stmt::Match(match_stmt) => self.emit_match(match_stmt, ctx, lines),
             Stmt::Break(_) => {
                 lines.push("    ; break is not implemented in asm backend".to_string())
             }
@@ -163,7 +260,6 @@ impl AsmGenerator {
             Stmt::Struct(_) => lines.push("    ; struct ignored in function scope".to_string()),
             Stmt::Enum(_) => lines.push("    ; enum ignored in function scope".to_string()),
             Stmt::Impl(_) => lines.push("    ; impl ignored in function scope".to_string()),
-            Stmt::Match(_) => lines.push("    ; match ignored in function scope".to_string()),
             Stmt::Class(_) => lines.push("    ; class ignored in function scope".to_string()),
             Stmt::Fun(_) => lines.push("    ; nested function ignored".to_string()),
             Stmt::Empty => {}
@@ -263,6 +359,149 @@ impl AsmGenerator {
             }
 
             self.emit_stmt(for_stmt.body.as_ref(), ctx, lines);
+        }
+    }
+
+    fn emit_match(
+        &mut self,
+        match_stmt: &MatchStmt,
+        ctx: &mut FunctionContext,
+        lines: &mut Vec<String>,
+    ) {
+        if match_stmt.arms.is_empty() {
+            return;
+        }
+
+        self.emit_expr(&match_stmt.expr, ctx, lines);
+        lines.push("    mov r13, rax".to_string());
+
+        let end_label = self.new_label("match_end");
+        for (index, arm) in match_stmt.arms.iter().enumerate() {
+            let fail_label = if index + 1 == match_stmt.arms.len() {
+                end_label.clone()
+            } else {
+                self.new_label("match_next")
+            };
+
+            self.emit_pattern_guard(&arm.pattern, "r13", &fail_label, lines);
+            self.emit_pattern_bindings(&arm.pattern, "r13", ctx, lines);
+            self.emit_stmt(arm.body.as_ref(), ctx, lines);
+            lines.push(format!("    jmp {}", end_label));
+
+            if index + 1 != match_stmt.arms.len() {
+                lines.push(format!("{}:", fail_label));
+            }
+        }
+
+        lines.push(format!("{}:", end_label));
+    }
+
+    fn emit_pattern_guard(
+        &mut self,
+        pattern: &Pattern,
+        value_reg: &str,
+        fail_label: &str,
+        lines: &mut Vec<String>,
+    ) {
+        match pattern {
+            Pattern::Wildcard | Pattern::Identifier(_) => {}
+            Pattern::Literal(literal) => match literal {
+                Literal::Num(num) => {
+                    lines.push(format!("    cmp {}, {}", value_reg, *num as i64));
+                    lines.push(format!("    jne {}", fail_label));
+                }
+                Literal::Char(ch) => {
+                    lines.push(format!("    cmp {}, {}", value_reg, *ch as u32));
+                    lines.push(format!("    jne {}", fail_label));
+                }
+                Literal::Bool(value) => {
+                    let as_num = if *value { 1 } else { 0 };
+                    lines.push(format!("    cmp {}, {}", value_reg, as_num));
+                    lines.push(format!("    jne {}", fail_label));
+                }
+                Literal::Identifier(name) if name == "None" => {
+                    lines.push(format!("    cmp {}, 0", value_reg));
+                    lines.push(format!("    jne {}", fail_label));
+                }
+                _ => {
+                    lines
+                        .push("    ; unsupported literal match pattern in asm backend".to_string());
+                    lines.push(format!("    jmp {}", fail_label));
+                }
+            },
+            Pattern::Variant(name, nested) => {
+                if let Some(tag) = self.enum_variant_tags.get(name) {
+                    lines.push(format!("    cmp {}, {}", value_reg, tag));
+                    lines.push(format!("    jne {}", fail_label));
+                    if !nested.is_empty() {
+                        lines.push(
+                            "    ; variant payload pattern checks are not represented in asm backend"
+                                .to_string(),
+                        );
+                    }
+                } else {
+                    lines.push(format!("    ; unknown enum variant '{}'", name));
+                    lines.push(format!("    jmp {}", fail_label));
+                }
+            }
+        }
+    }
+
+    fn emit_pattern_bindings(
+        &self,
+        pattern: &Pattern,
+        value_reg: &str,
+        ctx: &mut FunctionContext,
+        lines: &mut Vec<String>,
+    ) {
+        match pattern {
+            Pattern::Identifier(name) => {
+                self.store_pattern_binding(name, Some(value_reg), ctx, lines)
+            }
+            Pattern::Variant(_, nested) => {
+                for nested_pattern in nested {
+                    self.emit_pattern_bindings_zeroed(nested_pattern, ctx, lines);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn emit_pattern_bindings_zeroed(
+        &self,
+        pattern: &Pattern,
+        ctx: &mut FunctionContext,
+        lines: &mut Vec<String>,
+    ) {
+        match pattern {
+            Pattern::Identifier(name) => self.store_pattern_binding(name, None, ctx, lines),
+            Pattern::Variant(_, nested) => {
+                for nested_pattern in nested {
+                    self.emit_pattern_bindings_zeroed(nested_pattern, ctx, lines);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn store_pattern_binding(
+        &self,
+        name: &str,
+        source_reg: Option<&str>,
+        ctx: &mut FunctionContext,
+        lines: &mut Vec<String>,
+    ) {
+        if let Some(offset) = ctx.var_offsets.get(name) {
+            if let Some(source_reg) = source_reg {
+                lines.push(format!("    mov QWORD [rbp-{}], {}", offset, source_reg));
+            } else {
+                lines.push(format!("    mov QWORD [rbp-{}], 0", offset));
+            }
+        } else {
+            lines.push(format!(
+                "    ; match binding '{}' has no stack slot in asm backend",
+                name
+            ));
         }
     }
 
@@ -462,11 +701,26 @@ fn collect_locals(stmt: &Stmt, locals: &mut BTreeSet<String>) {
         Stmt::Match(match_stmt) => {
             collect_expr_locals(&match_stmt.expr, locals);
             for arm in &match_stmt.arms {
+                collect_pattern_locals(&arm.pattern, locals);
                 collect_locals(arm.body.as_ref(), locals);
             }
         }
         Stmt::Return(ret) => collect_expr_locals(&ret.return_expr, locals),
         Stmt::Expr(expr_stmt) => collect_expr_locals(&expr_stmt.expr, locals),
+        _ => {}
+    }
+}
+
+fn collect_pattern_locals(pattern: &Pattern, locals: &mut BTreeSet<String>) {
+    match pattern {
+        Pattern::Identifier(name) => {
+            locals.insert(name.clone());
+        }
+        Pattern::Variant(_, nested) => {
+            for nested_pattern in nested {
+                collect_pattern_locals(nested_pattern, locals);
+            }
+        }
         _ => {}
     }
 }
@@ -510,7 +764,10 @@ mod tests {
 
     use crate::{
         asm_generator::{collect_locals, AsmGenerator, FunctionContext},
-        ast::{BlockStmt, Expr, ExprStmt, ForStmt, Literal, Stmt, VarStmt},
+        ast::{
+            BlockStmt, EnumStmt, EnumVariant, Expr, ExprStmt, ForStmt, FunStmt, ImplStmt, Literal,
+            MatchArm, MatchStmt, Pattern, ReturnStmt, Stmt, Type, VarStmt,
+        },
         lexer::Lexer,
         parser::Parser,
     };
@@ -645,5 +902,125 @@ fun main(): Num {
 
         assert_eq!(first, ".loop_0");
         assert_eq!(second, ".loop_1");
+    }
+
+    #[test]
+    fn collect_enum_variant_tags_assigns_incrementing_tags() {
+        let program = BlockStmt {
+            stmts: vec![Stmt::Enum(EnumStmt {
+                name: "Maybe".to_string(),
+                variants: vec![
+                    EnumVariant {
+                        name: "Some".to_string(),
+                        arguments: vec![Type::Num],
+                    },
+                    EnumVariant {
+                        name: "Empty".to_string(),
+                        arguments: vec![],
+                    },
+                ],
+            })],
+        };
+
+        let generator = AsmGenerator::new();
+        let tags = generator.collect_enum_variant_tags(&program);
+
+        assert_eq!(tags.get("Some"), Some(&0));
+        assert_eq!(tags.get("Empty"), Some(&1));
+    }
+
+    #[test]
+    fn emit_pattern_guard_literal_emits_cmp_and_jump() {
+        let mut generator = AsmGenerator::new();
+        let mut lines = Vec::new();
+
+        generator.emit_pattern_guard(
+            &Pattern::Literal(Literal::Num(7.0)),
+            "r13",
+            ".match_fail",
+            &mut lines,
+        );
+
+        assert_eq!(
+            lines,
+            vec![
+                "    cmp r13, 7".to_string(),
+                "    jne .match_fail".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn emit_pattern_guard_variant_uses_enum_tag() {
+        let mut generator = AsmGenerator::new();
+        generator.enum_variant_tags.insert("Some".to_string(), 3);
+        let mut lines = Vec::new();
+
+        generator.emit_pattern_guard(
+            &Pattern::Variant("Some".to_string(), vec![]),
+            "r13",
+            ".match_fail",
+            &mut lines,
+        );
+
+        assert!(lines.contains(&"    cmp r13, 3".to_string()));
+        assert!(lines.contains(&"    jne .match_fail".to_string()));
+    }
+
+    #[test]
+    fn emit_match_binds_identifier_pattern_to_stack_slot() {
+        let mut generator = AsmGenerator::new();
+        let mut lines = Vec::new();
+        let mut ctx = FunctionContext {
+            var_offsets: HashMap::from([("bound".to_string(), 8)]),
+            epilogue_label: ".ep".to_string(),
+        };
+
+        generator.emit_match(
+            &MatchStmt {
+                expr: Expr::Literal(Literal::Num(1.0)),
+                arms: vec![MatchArm {
+                    pattern: Pattern::Identifier("bound".to_string()),
+                    body: Box::new(Stmt::Return(ReturnStmt {
+                        return_expr: Expr::Literal(Literal::Identifier("bound".to_string())),
+                    })),
+                }],
+            },
+            &mut ctx,
+            &mut lines,
+        );
+
+        assert!(lines.contains(&"    mov r13, rax".to_string()));
+        assert!(lines.contains(&"    mov QWORD [rbp-8], r13".to_string()));
+        assert!(lines.iter().any(|line| line.starts_with(".match_end_")));
+    }
+
+    #[test]
+    fn emit_impl_produces_method_label_and_metadata_entries() {
+        let mut generator = AsmGenerator::new();
+        let mut text = Vec::new();
+        let mut rodata = vec!["section .rodata".to_string()];
+
+        generator.emit_impl(
+            &ImplStmt {
+                name: "Point".to_string(),
+                methods: vec![Stmt::Fun(FunStmt {
+                    name: "value".to_string(),
+                    return_type: Type::Num,
+                    params: vec![],
+                    block: Box::new(Stmt::Block(BlockStmt {
+                        stmts: vec![Stmt::Return(ReturnStmt {
+                            return_expr: Expr::Literal(Literal::Num(1.0)),
+                        })],
+                    })),
+                })],
+            },
+            &mut text,
+            &mut rodata,
+        );
+
+        assert!(text.iter().any(|line| line == "Point__value:"));
+        assert!(rodata.iter().any(|line| line == "__kek_impl_Point:"));
+        assert!(rodata.iter().any(|line| line == "    dq Point__value"));
     }
 }
