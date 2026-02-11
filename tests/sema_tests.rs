@@ -412,3 +412,169 @@ fun main() -> Num {
     let result = analyze_source(source);
     assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
 }
+
+#[test]
+fn sema_rejects_duplicate_module_import_binding() {
+    let source = r#"
+mod core;
+import Other as core from "../src/other.kek";
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Duplicate module/import/use binding 'core'");
+}
+
+#[test]
+fn sema_rejects_duplicate_use_binding_name() {
+    let source = r#"
+mod api;
+use api::io;
+use api::io;
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Duplicate module/import/use binding 'io'");
+}
+
+#[test]
+fn sema_rejects_public_impl_on_private_type() {
+    let source = r#"
+struct Hidden {
+    value: Num;
+}
+
+pub impl Hidden {
+    fun value() -> Num {
+        return 1;
+    }
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Cannot declare public impl for private type 'Hidden'");
+}
+
+#[test]
+fn sema_rejects_unknown_enum_variant_in_match() {
+    let source = r#"
+enum Maybe {
+    Some(Num),
+    Empty
+}
+
+fun eval(x: Maybe) -> Num {
+    match x {
+        Unknown(v) => { return v; },
+        Empty() => { return 0; }
+    }
+    return 0;
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Unknown enum variant 'Unknown'");
+}
+
+#[test]
+fn sema_rejects_variant_pattern_arity_mismatch() {
+    let source = r#"
+enum Maybe {
+    Some(Num),
+    Empty
+}
+
+fun eval(x: Maybe) -> Num {
+    match x {
+        Some(a, b) => { return a; },
+        Empty() => { return 0; }
+    }
+    return 0;
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Variant 'Some' expects 1 patterns, got 2");
+}
+
+#[test]
+fn sema_rejects_non_exhaustive_num_match_without_catch_all() {
+    let source = r#"
+fun main() -> Num {
+    var value: Num = 1;
+    match value {
+        1 => { return 1; }
+    }
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Non-exhaustive match for type Num");
+}
+
+#[test]
+fn sema_rejects_this_outside_impl_method() {
+    let source = r#"
+fun main() -> Num {
+    return this.value;
+}
+"#;
+
+    assert_has_error(source, "'this' used outside of impl method");
+}
+
+#[test]
+fn sema_rejects_member_assignment_type_mismatch() {
+    let source = r#"
+struct Point {
+    x: Num;
+}
+
+fun main() -> Num {
+    var p: Point;
+    p.x = true;
+    return 0;
+}
+"#;
+
+    assert_has_error(
+        source,
+        "Assignment type mismatch for member 'x': expected Num, got Bool",
+    );
+}
+
+#[test]
+fn sema_accepts_this_member_access_inside_impl() {
+    let source = r#"
+struct Point {
+    x: Num;
+}
+
+impl Point {
+    fun get() -> Num {
+        return this.x;
+    }
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}

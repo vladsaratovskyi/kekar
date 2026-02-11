@@ -1217,10 +1217,14 @@ fn is_assignable(expected: &Type, actual: &Type) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_assignable, SemanticAnalyzer};
+    use std::collections::{HashMap, HashSet};
+
+    use super::{is_assignable, SemanticAnalyzer, Visibility};
     use crate::{
         ast::{
-            BlockStmt, Expr, ExprStmt, FunStmt, Literal, Param, ReturnStmt, Stmt, Type, VarStmt,
+            BlockStmt, Expr, ExprStmt, FieldDecl, FunStmt, ImplStmt, Literal, MatchArm, MatchStmt,
+            MemberExpr, ModStmt, Param, Pattern, ReturnStmt, Stmt, StructStmt, Type, UseStmt,
+            VarStmt,
         },
         lexer::Token,
     };
@@ -1424,5 +1428,137 @@ mod tests {
         assert!(analyzer.errors[0]
             .message
             .contains("Type mismatch for variable 'v'"));
+    }
+
+    #[test]
+    fn validate_use_bindings_rejects_public_reexport_of_private_root() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.register_module(
+            &ModStmt {
+                name: "internal".to_string(),
+            },
+            Visibility::Private,
+        );
+        analyzer.register_use(
+            &UseStmt {
+                path: "internal::api".to_string(),
+            },
+            Visibility::Public,
+        );
+
+        analyzer.validate_use_bindings();
+
+        assert!(analyzer.errors.iter().any(|err| err
+            .message
+            .contains("Cannot publicly re-export private root 'internal'")));
+    }
+
+    #[test]
+    fn validate_use_bindings_rejects_unresolved_root() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.register_use(
+            &UseStmt {
+                path: "missing::io".to_string(),
+            },
+            Visibility::Private,
+        );
+
+        analyzer.validate_use_bindings();
+
+        assert!(analyzer.errors.iter().any(|err| err
+            .message
+            .contains("Unresolved use path root 'missing'")));
+    }
+
+    #[test]
+    fn register_impl_methods_rejects_unknown_impl_target() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.register_impl_methods(
+            &ImplStmt {
+                name: "Ghost".to_string(),
+                methods: vec![],
+            },
+            Visibility::Private,
+        );
+
+        assert!(analyzer.errors.iter().any(|err| err
+            .message
+            .contains("Impl target type 'Ghost' is not declared")));
+    }
+
+    #[test]
+    fn member_access_returns_struct_field_type() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.register_struct_def(
+            &StructStmt {
+                name: "Point".to_string(),
+                fields: vec![FieldDecl {
+                    name: "x".to_string(),
+                    field_type: Type::Num,
+                }],
+            },
+            Visibility::Private,
+        );
+        analyzer.define_symbol("p", Type::Identifier("Point".to_string()), true);
+
+        let ty = analyzer.analyze_expr(&Expr::Mebmer(MemberExpr {
+            member: Box::new(Expr::Literal(Literal::Identifier("p".to_string()))),
+            property: "x".to_string(),
+        }));
+
+        assert_eq!(ty, Type::Num);
+        assert!(analyzer.errors.is_empty());
+    }
+
+    #[test]
+    fn bind_pattern_reports_variant_arity_mismatch() {
+        let mut analyzer = SemanticAnalyzer::new();
+        let mut variants = HashMap::new();
+        variants.insert("Some".to_string(), vec![Type::Num]);
+
+        let mut has_catch_all = false;
+        let mut seen_enum_variants = HashSet::new();
+        let mut seen_bool_literals = HashSet::new();
+        analyzer.bind_pattern(
+            &Pattern::Variant(
+                "Some".to_string(),
+                vec![
+                    Pattern::Identifier("a".to_string()),
+                    Pattern::Identifier("b".to_string()),
+                ],
+            ),
+            &Type::Identifier("Maybe".to_string()),
+            Some(&variants),
+            true,
+            &mut has_catch_all,
+            &mut seen_enum_variants,
+            &mut seen_bool_literals,
+        );
+
+        assert!(analyzer.errors.iter().any(|err| err
+            .message
+            .contains("Variant 'Some' expects 1 patterns, got 2")));
+    }
+
+    #[test]
+    fn analyze_match_stmt_accepts_exhaustive_bool_patterns() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.define_symbol("flag", Type::Bool, true);
+
+        analyzer.analyze_match_stmt(&MatchStmt {
+            expr: Expr::Literal(Literal::Identifier("flag".to_string())),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::Literal(Literal::Bool(true)),
+                    body: Box::new(Stmt::Block(BlockStmt { stmts: vec![] })),
+                },
+                MatchArm {
+                    pattern: Pattern::Literal(Literal::Bool(false)),
+                    body: Box::new(Stmt::Block(BlockStmt { stmts: vec![] })),
+                },
+            ],
+        });
+
+        assert!(analyzer.errors.is_empty());
     }
 }
