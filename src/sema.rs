@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{BlockStmt, Expr, ForStmt, FunStmt, IfStmt, Literal, Stmt, Type, VarStmt, WhileStmt},
+    ast::{
+        BlockStmt, Expr, ForStmt, FunStmt, IfStmt, Literal, MatchStmt, Pattern, Stmt, Type,
+        VarStmt, WhileStmt,
+    },
     lexer::Token,
 };
 
@@ -70,19 +73,14 @@ impl SemanticAnalyzer {
 
     fn collect_function_signatures(&mut self, program: &BlockStmt) {
         for stmt in &program.stmts {
-            if let Stmt::Fun(fun) = stmt {
-                if self.functions.contains_key(&fun.name) {
-                    self.error(format!("Duplicate function '{}'", fun.name));
-                    continue;
+            match stmt {
+                Stmt::Fun(fun) => self.register_function_signature(fun),
+                Stmt::Pub(pub_stmt) => {
+                    if let Stmt::Fun(fun) = pub_stmt.stmt.as_ref() {
+                        self.register_function_signature(fun);
+                    }
                 }
-
-                self.functions.insert(
-                    fun.name.clone(),
-                    FunctionSig {
-                        params: fun.params.iter().map(|p| p.param_type.clone()).collect(),
-                        return_type: fun.return_type.clone(),
-                    },
-                );
+                _ => {}
             }
         }
     }
@@ -96,6 +94,9 @@ impl SemanticAnalyzer {
                 }
                 self.pop_scope();
             }
+            Stmt::Pub(pub_stmt) => self.analyze_stmt(pub_stmt.stmt.as_ref()),
+            Stmt::Mod(_) => {}
+            Stmt::Use(_) => {}
             Stmt::Var(var_stmt) => self.analyze_var_stmt(var_stmt),
             Stmt::Const(const_stmt) => {
                 let rhs_type = self.analyze_expr(&const_stmt.assignment);
@@ -113,7 +114,17 @@ impl SemanticAnalyzer {
 
                 self.define_symbol(&const_stmt.name, final_type, false);
             }
+            Stmt::Struct(_) => {}
+            Stmt::Enum(_) => {}
+            Stmt::Impl(impl_stmt) => {
+                self.push_scope();
+                for method in &impl_stmt.methods {
+                    self.analyze_stmt(method);
+                }
+                self.pop_scope();
+            }
             Stmt::If(if_stmt) => self.analyze_if_stmt(if_stmt),
+            Stmt::Match(match_stmt) => self.analyze_match_stmt(match_stmt),
             Stmt::While(while_stmt) => self.analyze_while_stmt(while_stmt),
             Stmt::For(for_stmt) => self.analyze_for_stmt(for_stmt),
             Stmt::Break(_) => {
@@ -262,6 +273,32 @@ impl SemanticAnalyzer {
 
         self.pop_scope();
         self.current_return_type = previous_return;
+    }
+
+    fn analyze_match_stmt(&mut self, match_stmt: &MatchStmt) {
+        self.analyze_expr(&match_stmt.expr);
+
+        for arm in &match_stmt.arms {
+            self.push_scope();
+            self.bind_pattern(&arm.pattern);
+            self.analyze_stmt(arm.body.as_ref());
+            self.pop_scope();
+        }
+    }
+
+    fn bind_pattern(&mut self, pattern: &Pattern) {
+        match pattern {
+            Pattern::Wildcard => {}
+            Pattern::Literal(_) => {}
+            Pattern::Identifier(name) => {
+                self.define_symbol(name, Type::None, true);
+            }
+            Pattern::Variant(_, nested) => {
+                for pattern in nested {
+                    self.bind_pattern(pattern);
+                }
+            }
+        }
     }
 
     fn analyze_expr(&mut self, expr: &Expr) -> Type {
@@ -503,6 +540,21 @@ impl SemanticAnalyzer {
 
     fn error(&mut self, message: impl Into<String>) {
         self.errors.push(SemanticError::new(message));
+    }
+
+    fn register_function_signature(&mut self, fun: &FunStmt) {
+        if self.functions.contains_key(&fun.name) {
+            self.error(format!("Duplicate function '{}'", fun.name));
+            return;
+        }
+
+        self.functions.insert(
+            fun.name.clone(),
+            FunctionSig {
+                params: fun.params.iter().map(|p| p.param_type.clone()).collect(),
+                return_type: fun.return_type.clone(),
+            },
+        );
     }
 }
 

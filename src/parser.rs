@@ -140,6 +140,7 @@ impl Parser {
             Token::Number(n) => Expr::Literal(Literal::Num(*n)),
             Token::True => Expr::Literal(Literal::Bool(true)),
             Token::False => Expr::Literal(Literal::Bool(false)),
+            Token::None => Expr::Literal(Literal::Identifier("None".to_string())),
             Token::String(s) => Expr::Literal(Literal::String(s.to_string())),
             Token::Char(c) => Expr::Literal(Literal::Char(*c)),
             Token::Identifier(i) => Expr::Literal(Literal::Identifier(i.to_string())),
@@ -207,6 +208,96 @@ impl Parser {
             assignment,
             const_type,
         })
+    }
+
+    fn parse_mod_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Mod);
+        let name = self.expect_identifier_get_name();
+        self.expect(&Token::Semicolon);
+        Stmt::Mod(ModStmt { name })
+    }
+
+    fn parse_use_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Use);
+        let mut parts = vec![self.expect_identifier_get_name()];
+
+        while self.current_token() == &Token::ColonColon {
+            self.expect(&Token::ColonColon);
+            parts.push(self.expect_identifier_get_name());
+        }
+
+        self.expect(&Token::Semicolon);
+        Stmt::Use(UseStmt {
+            path: parts.join("::"),
+        })
+    }
+
+    fn parse_struct_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Struct);
+        let name = self.expect_identifier_get_name();
+        self.expect(&Token::LeftBracket);
+
+        let mut fields = Vec::new();
+        while self.has_tokens() && self.current_token() != &Token::RightBracket {
+            if self.current_token() == &Token::Semicolon {
+                self.get_token_and_move();
+                continue;
+            }
+
+            let field_name = self.expect_identifier_get_name();
+            self.expect(&Token::Colon);
+            let field_type = self.parse_type();
+            self.expect(&Token::Semicolon);
+
+            fields.push(FieldDecl {
+                name: field_name,
+                field_type,
+            });
+        }
+
+        self.expect(&Token::RightBracket);
+        Stmt::Struct(StructStmt { name, fields })
+    }
+
+    fn parse_enum_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Enum);
+        let name = self.expect_identifier_get_name();
+        self.expect(&Token::LeftBracket);
+
+        let mut variants = Vec::new();
+        while self.has_tokens() && self.current_token() != &Token::RightBracket {
+            if self.current_token() == &Token::Coma {
+                self.expect(&Token::Coma);
+                continue;
+            }
+
+            let variant_name = self.expect_identifier_get_name();
+            let mut arguments = Vec::new();
+
+            if self.current_token() == &Token::LeftParen {
+                self.expect(&Token::LeftParen);
+                while self.has_tokens() && self.current_token() != &Token::RightParen {
+                    arguments.push(self.parse_type());
+
+                    if !matches!(self.current_token(), &Token::RightParen | &Token::Eof) {
+                        self.expect(&Token::Coma);
+                    }
+                }
+                self.expect(&Token::RightParen);
+            }
+
+            variants.push(EnumVariant {
+                name: variant_name,
+                arguments,
+            });
+
+            if self.current_token() == &Token::Coma {
+                self.expect(&Token::Coma);
+            }
+        }
+
+        self.expect(&Token::RightBracket);
+        Stmt::Enum(EnumStmt { name, variants })
     }
 
     fn parse_assignment_exrp(&mut self, left: Expr) -> Expr {
@@ -382,11 +473,69 @@ impl Parser {
         })
     }
 
+    fn parse_impl_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Impl);
+        let name = self.expect_identifier_get_name();
+        self.expect(&Token::LeftBracket);
+
+        let mut methods = Vec::new();
+        while self.has_tokens() && self.current_token() != &Token::RightBracket {
+            if self.current_token() == &Token::Semicolon {
+                self.get_token_and_move();
+                continue;
+            }
+
+            let method = if self.current_token() == &Token::Pub {
+                self.parse_pub_stmt()
+            } else {
+                self.parse_fun_stmt()
+            };
+
+            let valid = matches!(method, Stmt::Fun(_))
+                || matches!(&method, Stmt::Pub(pub_stmt) if matches!(pub_stmt.stmt.as_ref(), Stmt::Fun(_)));
+
+            if !valid {
+                panic!("Impl blocks can contain only function declarations");
+            }
+
+            methods.push(method);
+        }
+
+        self.expect(&Token::RightBracket);
+        Stmt::Impl(ImplStmt { name, methods })
+    }
+
+    fn parse_pub_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Pub);
+        let inner = match self.current_token() {
+            Token::Fun => self.parse_fun_stmt(),
+            Token::Var => self.parse_var_stmt(),
+            Token::Const => self.parse_const_stmt(),
+            Token::Struct => self.parse_struct_stmt(),
+            Token::Enum => self.parse_enum_stmt(),
+            Token::Class => self.parse_class_stmt(),
+            Token::Mod => self.parse_mod_stmt(),
+            Token::Use => self.parse_use_stmt(),
+            Token::Impl => self.parse_impl_stmt(),
+            _ => panic!("Unsupported token after 'pub': {}", self.current_token()),
+        };
+
+        Stmt::Pub(PubStmt {
+            stmt: Box::new(inner),
+        })
+    }
+
     fn parse_import_stmt(&mut self) -> Stmt {
         self.expect(&Token::Import);
 
         let mut from = "".to_string();
         let import = self.expect_identifier_get_name();
+        let mut alias = None;
+
+        if self.current_token() == &Token::As {
+            self.expect(&Token::As);
+            alias = Some(self.expect_identifier_get_name());
+        }
 
         if self.current_token() == &Token::From {
             self.get_token_and_move();
@@ -400,7 +549,115 @@ impl Parser {
 
         self.expect(&Token::Semicolon);
 
-        Stmt::Import(ImportStmt { import, from })
+        Stmt::Import(ImportStmt {
+            import,
+            from,
+            alias,
+        })
+    }
+
+    fn parse_match_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Match);
+        let expr = self.parse_expr(Binding::Def);
+        self.expect(&Token::LeftBracket);
+
+        let mut arms = Vec::new();
+        while self.has_tokens() && self.current_token() != &Token::RightBracket {
+            if self.current_token() == &Token::Coma {
+                self.get_token_and_move();
+                continue;
+            }
+            if self.current_token() == &Token::Semicolon {
+                self.get_token_and_move();
+                continue;
+            }
+
+            let pattern = self.parse_pattern();
+            self.expect(&Token::FatArrow);
+
+            let body = if self.current_token() == &Token::LeftBracket {
+                self.parse_block_stmt()
+            } else {
+                let arm_expr = self.parse_expr(Binding::Def);
+                self.expect(&Token::Semicolon);
+                Stmt::Expr(ExprStmt { expr: arm_expr })
+            };
+
+            arms.push(MatchArm {
+                pattern,
+                body: Box::new(body),
+            });
+
+            if self.current_token() == &Token::Coma {
+                self.expect(&Token::Coma);
+            }
+        }
+
+        self.expect(&Token::RightBracket);
+        Stmt::Match(MatchStmt { expr, arms })
+    }
+
+    fn parse_pattern(&mut self) -> Pattern {
+        match self.current_token() {
+            Token::Identifier(name) => {
+                let identifier = self.expect_identifier_get_name();
+
+                if identifier == "_" {
+                    return Pattern::Wildcard;
+                }
+
+                if self.current_token() == &Token::LeftParen {
+                    self.expect(&Token::LeftParen);
+                    let mut patterns = Vec::new();
+
+                    while self.has_tokens() && self.current_token() != &Token::RightParen {
+                        patterns.push(self.parse_pattern());
+                        if !matches!(self.current_token(), &Token::RightParen | &Token::Eof) {
+                            self.expect(&Token::Coma);
+                        }
+                    }
+
+                    self.expect(&Token::RightParen);
+                    Pattern::Variant(identifier, patterns)
+                } else {
+                    Pattern::Identifier(identifier)
+                }
+            }
+            Token::String(s) => {
+                let value = match self.get_token_and_move() {
+                    Token::String(s) => s.to_string(),
+                    _ => unreachable!(),
+                };
+                Pattern::Literal(Literal::String(value))
+            }
+            Token::Char(c) => {
+                let value = match self.get_token_and_move() {
+                    Token::Char(c) => *c,
+                    _ => unreachable!(),
+                };
+                Pattern::Literal(Literal::Char(value))
+            }
+            Token::Number(n) => {
+                let value = match self.get_token_and_move() {
+                    Token::Number(n) => *n,
+                    _ => unreachable!(),
+                };
+                Pattern::Literal(Literal::Num(value))
+            }
+            Token::True => {
+                self.expect(&Token::True);
+                Pattern::Literal(Literal::Bool(true))
+            }
+            Token::False => {
+                self.expect(&Token::False);
+                Pattern::Literal(Literal::Bool(false))
+            }
+            Token::None => {
+                self.expect(&Token::None);
+                Pattern::Identifier("None".to_string())
+            }
+            _ => panic!("Unsupported pattern token {}", self.current_token()),
+        }
     }
 
     fn parse_group_expr(&mut self) -> Expr {
@@ -461,6 +718,7 @@ impl Parser {
             Token::Char(_) => Some(self.parse_primary_expr()),
             Token::True => Some(self.parse_primary_expr()),
             Token::False => Some(self.parse_primary_expr()),
+            Token::None => Some(self.parse_primary_expr()),
             Token::This => Some(self.parse_primary_expr()),
             Token::Identifier(_) => Some(self.parse_primary_expr()),
             //Unary
@@ -481,9 +739,16 @@ impl Parser {
         //TODO extend
         match self.current_token() {
             Token::LeftBracket => Some(self.parse_block_stmt()),
+            Token::Pub => Some(self.parse_pub_stmt()),
+            Token::Mod => Some(self.parse_mod_stmt()),
+            Token::Use => Some(self.parse_use_stmt()),
             Token::Var => Some(self.parse_var_stmt()),
             Token::Const => Some(self.parse_const_stmt()),
+            Token::Struct => Some(self.parse_struct_stmt()),
+            Token::Enum => Some(self.parse_enum_stmt()),
+            Token::Impl => Some(self.parse_impl_stmt()),
             Token::If => Some(self.parse_if_stmt()),
+            Token::Match => Some(self.parse_match_stmt()),
             Token::While => Some(self.parse_while_stmt()),
             Token::For => Some(self.parse_for_stmt()),
             Token::Break => Some(self.parse_break_stmt()),
@@ -1352,6 +1617,7 @@ mod tests {
         let expected = Stmt::Import(ImportStmt {
             import: "System".to_string(),
             from: "System".to_string(),
+            alias: None,
         });
 
         assert_eq!(res, expected);
@@ -1374,6 +1640,7 @@ mod tests {
         let expected = Stmt::Import(ImportStmt {
             import: "System".to_string(),
             from: "Path".to_string(),
+            alias: None,
         });
 
         assert_eq!(res, expected);

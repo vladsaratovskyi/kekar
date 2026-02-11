@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        BlockStmt, ConstStmt, Expr, ForStmt, FunStmt, IfStmt, ImportStmt, Literal, Stmt, VarStmt,
-        WhileStmt,
+        BlockStmt, ConstStmt, EnumStmt, Expr, ForStmt, FunStmt, IfStmt, ImportStmt, Literal,
+        MatchStmt, ModStmt, Pattern, Stmt, StructStmt, UseStmt, VarStmt, WhileStmt,
     },
     lexer::Token,
 };
@@ -54,7 +54,21 @@ impl Emitter {
 
     fn emit_stmt(&mut self, stmt: &Stmt, in_class: bool) {
         match stmt {
+            Stmt::Pub(pub_stmt) => self.emit_stmt(pub_stmt.stmt.as_ref(), in_class),
+            Stmt::Mod(mod_stmt) => self.emit_mod(mod_stmt),
+            Stmt::Use(use_stmt) => self.emit_use(use_stmt),
             Stmt::Import(import_stmt) => self.emit_import(import_stmt),
+            Stmt::Struct(struct_stmt) => self.emit_struct(struct_stmt),
+            Stmt::Enum(enum_stmt) => self.emit_enum(enum_stmt),
+            Stmt::Impl(impl_stmt) => {
+                self.line(&format!("// impl {} {{", impl_stmt.name));
+                self.indent += 1;
+                for method in &impl_stmt.methods {
+                    self.emit_stmt(method, false);
+                }
+                self.indent -= 1;
+                self.line("// }");
+            }
             Stmt::Class(class_stmt) => {
                 self.line(&format!("class {} {{", class_stmt.name));
                 self.indent += 1;
@@ -72,6 +86,7 @@ impl Emitter {
             Stmt::Var(var_stmt) => self.emit_var(var_stmt, in_class),
             Stmt::Const(const_stmt) => self.emit_const(const_stmt),
             Stmt::If(if_stmt) => self.emit_if(if_stmt, in_class),
+            Stmt::Match(match_stmt) => self.emit_match(match_stmt, in_class),
             Stmt::While(while_stmt) => self.emit_while(while_stmt, in_class),
             Stmt::For(for_stmt) => self.emit_for(for_stmt, in_class),
             Stmt::Break(_) => self.line("break;"),
@@ -97,10 +112,52 @@ impl Emitter {
     }
 
     fn emit_import(&mut self, import_stmt: &ImportStmt) {
-        self.line(&format!(
-            "import {} from \"{}\";",
-            import_stmt.import, import_stmt.from
-        ));
+        if let Some(alias) = &import_stmt.alias {
+            self.line(&format!(
+                "import {} as {} from \"{}\";",
+                import_stmt.import, alias, import_stmt.from
+            ));
+        } else {
+            self.line(&format!(
+                "import {} from \"{}\";",
+                import_stmt.import, import_stmt.from
+            ));
+        }
+    }
+
+    fn emit_mod(&mut self, mod_stmt: &ModStmt) {
+        self.line(&format!("// mod {};", mod_stmt.name));
+    }
+
+    fn emit_use(&mut self, use_stmt: &UseStmt) {
+        self.line(&format!("// use {};", use_stmt.path));
+    }
+
+    fn emit_struct(&mut self, struct_stmt: &StructStmt) {
+        self.line(&format!("class {} {{", struct_stmt.name));
+        self.indent += 1;
+        for field in &struct_stmt.fields {
+            self.line(&format!("{};", field.name));
+        }
+        self.indent -= 1;
+        self.line("}");
+    }
+
+    fn emit_enum(&mut self, enum_stmt: &EnumStmt) {
+        self.line(&format!("const {} = {{", enum_stmt.name));
+        self.indent += 1;
+        for variant in &enum_stmt.variants {
+            if variant.arguments.is_empty() {
+                self.line(&format!("{}: \"{}\",", variant.name, variant.name));
+            } else {
+                self.line(&format!(
+                    "{}: (...args) => ({{ tag: \"{}\", args }}),",
+                    variant.name, variant.name
+                ));
+            }
+        }
+        self.indent -= 1;
+        self.line("};");
     }
 
     fn emit_fun(&mut self, fun_stmt: &FunStmt, in_class: bool) {
@@ -169,6 +226,20 @@ impl Emitter {
         self.emit_stmt_block_contents(&if_stmt.else_block, in_class);
         self.indent -= 1;
         self.line("}");
+    }
+
+    fn emit_match(&mut self, match_stmt: &MatchStmt, in_class: bool) {
+        self.line(&format!(
+            "// match {} {{",
+            self.expr_to_js(&match_stmt.expr)
+        ));
+        self.indent += 1;
+        for arm in &match_stmt.arms {
+            self.line(&format!("// arm {}", self.pattern_to_js(&arm.pattern)));
+            self.emit_stmt(arm.body.as_ref(), in_class);
+        }
+        self.indent -= 1;
+        self.line("// }");
     }
 
     fn emit_while(&mut self, while_stmt: &WhileStmt, in_class: bool) {
@@ -304,6 +375,22 @@ impl Emitter {
             _ => "",
         }
     }
+
+    fn pattern_to_js(&self, pattern: &Pattern) -> String {
+        match pattern {
+            Pattern::Wildcard => "_".to_string(),
+            Pattern::Literal(lit) => self.literal_to_js(lit),
+            Pattern::Identifier(id) => id.clone(),
+            Pattern::Variant(name, patterns) => {
+                let inner = patterns
+                    .iter()
+                    .map(|p| self.pattern_to_js(p))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}({})", name, inner)
+            }
+        }
+    }
 }
 
 fn escape_js_string(input: &str) -> String {
@@ -344,6 +431,7 @@ mod tests {
                 Stmt::Import(ImportStmt {
                     import: "System".to_string(),
                     from: "../src/system.kek".to_string(),
+                    alias: None,
                 }),
                 Stmt::Class(ClassStmt {
                     name: "Person".to_string(),

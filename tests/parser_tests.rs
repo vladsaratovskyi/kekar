@@ -5,8 +5,10 @@ mod tests {
 
     use kekar::{
         ast::{
-            BlockStmt, BreakStmt, ClassStmt, ConstStmt, ContinueStmt, Expr, ExprStmt, ForStmt,
-            FunStmt, IfStmt, Literal, Param, Stmt, Type, VarStmt, WhileStmt,
+            BlockStmt, BreakStmt, ClassStmt, ConstStmt, ContinueStmt, EnumStmt, EnumVariant, Expr,
+            ExprStmt, FieldDecl, ForStmt, FunStmt, IfStmt, ImplStmt, ImportStmt, Literal, MatchArm,
+            MatchStmt, ModStmt, Param, Pattern, PubStmt, ReturnStmt, Stmt, StructStmt, Type,
+            UseStmt, VarStmt, WhileStmt,
         },
         lexer::Token,
         parser::Parser,
@@ -455,6 +457,312 @@ mod tests {
                         return_expr: Expr::Empty,
                     })],
                 })),
+            })],
+        };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_import_with_alias() {
+        let tokens = vec![
+            Token::Import,
+            Token::Identifier("System".to_string()),
+            Token::As,
+            Token::Identifier("Sys".to_string()),
+            Token::From,
+            Token::String("../src/system.kek".to_string()),
+            Token::Semicolon,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![Stmt::Import(ImportStmt {
+                import: "System".to_string(),
+                from: "../src/system.kek".to_string(),
+                alias: Some("Sys".to_string()),
+            })],
+        };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_mod_and_use_statements() {
+        let tokens = vec![
+            Token::Mod,
+            Token::Identifier("core".to_string()),
+            Token::Semicolon,
+            Token::Use,
+            Token::Identifier("std".to_string()),
+            Token::ColonColon,
+            Token::Identifier("io".to_string()),
+            Token::ColonColon,
+            Token::Identifier("print".to_string()),
+            Token::Semicolon,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![
+                Stmt::Mod(ModStmt {
+                    name: "core".to_string(),
+                }),
+                Stmt::Use(UseStmt {
+                    path: "std::io::print".to_string(),
+                }),
+            ],
+        };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_pub_struct_enum_and_function() {
+        let tokens = vec![
+            Token::Pub,
+            Token::Struct,
+            Token::Identifier("Point".to_string()),
+            Token::LeftBracket,
+            Token::Identifier("x".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::Semicolon,
+            Token::Identifier("y".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Pub,
+            Token::Enum,
+            Token::Identifier("MaybeNum".to_string()),
+            Token::LeftBracket,
+            Token::Identifier("Some".to_string()),
+            Token::LeftParen,
+            Token::Identifier("Num".to_string()),
+            Token::RightParen,
+            Token::Coma,
+            Token::Identifier("Empty".to_string()),
+            Token::RightBracket,
+            Token::Pub,
+            Token::Fun,
+            Token::Identifier("main".to_string()),
+            Token::LeftParen,
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Number(1.0),
+            Token::Semicolon,
+            Token::RightBracket,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![
+                Stmt::Pub(PubStmt {
+                    stmt: Box::new(Stmt::Struct(StructStmt {
+                        name: "Point".to_string(),
+                        fields: vec![
+                            FieldDecl {
+                                name: "x".to_string(),
+                                field_type: Type::Num,
+                            },
+                            FieldDecl {
+                                name: "y".to_string(),
+                                field_type: Type::Num,
+                            },
+                        ],
+                    })),
+                }),
+                Stmt::Pub(PubStmt {
+                    stmt: Box::new(Stmt::Enum(EnumStmt {
+                        name: "MaybeNum".to_string(),
+                        variants: vec![
+                            EnumVariant {
+                                name: "Some".to_string(),
+                                arguments: vec![Type::Num],
+                            },
+                            EnumVariant {
+                                name: "Empty".to_string(),
+                                arguments: vec![],
+                            },
+                        ],
+                    })),
+                }),
+                Stmt::Pub(PubStmt {
+                    stmt: Box::new(Stmt::Fun(FunStmt {
+                        name: "main".to_string(),
+                        return_type: Type::Num,
+                        params: vec![],
+                        block: Box::new(Stmt::Block(BlockStmt {
+                            stmts: vec![Stmt::Return(ReturnStmt {
+                                return_expr: Expr::Literal(Literal::Num(1.0)),
+                            })],
+                        })),
+                    })),
+                }),
+            ],
+        };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_pub_var_declaration() {
+        let tokens = vec![
+            Token::Pub,
+            Token::Var,
+            Token::Identifier("count".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::Semicolon,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![Stmt::Pub(PubStmt {
+                stmt: Box::new(Stmt::Var(VarStmt {
+                    name: "count".to_string(),
+                    assignment: Expr::Empty,
+                    var_type: Type::Num,
+                })),
+            })],
+        };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_impl_block_with_methods() {
+        let tokens = vec![
+            Token::Impl,
+            Token::Identifier("Point".to_string()),
+            Token::LeftBracket,
+            Token::Fun,
+            Token::Identifier("len".to_string()),
+            Token::LeftParen,
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Number(1.0),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Pub,
+            Token::Fun,
+            Token::Identifier("zero".to_string()),
+            Token::LeftParen,
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Number(0.0),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::RightBracket,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![Stmt::Impl(ImplStmt {
+                name: "Point".to_string(),
+                methods: vec![
+                    Stmt::Fun(FunStmt {
+                        name: "len".to_string(),
+                        return_type: Type::Num,
+                        params: vec![],
+                        block: Box::new(Stmt::Block(BlockStmt {
+                            stmts: vec![Stmt::Return(ReturnStmt {
+                                return_expr: Expr::Literal(Literal::Num(1.0)),
+                            })],
+                        })),
+                    }),
+                    Stmt::Pub(PubStmt {
+                        stmt: Box::new(Stmt::Fun(FunStmt {
+                            name: "zero".to_string(),
+                            return_type: Type::Num,
+                            params: vec![],
+                            block: Box::new(Stmt::Block(BlockStmt {
+                                stmts: vec![Stmt::Return(ReturnStmt {
+                                    return_expr: Expr::Literal(Literal::Num(0.0)),
+                                })],
+                            })),
+                        })),
+                    }),
+                ],
+            })],
+        };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_match_with_literal_wildcard_and_variant_patterns() {
+        let tokens = vec![
+            Token::Match,
+            Token::Identifier("value".to_string()),
+            Token::LeftBracket,
+            Token::Number(1.0),
+            Token::FatArrow,
+            Token::Identifier("one".to_string()),
+            Token::Semicolon,
+            Token::Identifier("_".to_string()),
+            Token::FatArrow,
+            Token::Identifier("zero".to_string()),
+            Token::Semicolon,
+            Token::Identifier("Some".to_string()),
+            Token::LeftParen,
+            Token::Identifier("x".to_string()),
+            Token::RightParen,
+            Token::FatArrow,
+            Token::Identifier("x".to_string()),
+            Token::Semicolon,
+            Token::RightBracket,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![Stmt::Match(MatchStmt {
+                expr: Expr::Literal(Literal::Identifier("value".to_string())),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Num(1.0)),
+                        body: Box::new(Stmt::Expr(ExprStmt {
+                            expr: Expr::Literal(Literal::Identifier("one".to_string())),
+                        })),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        body: Box::new(Stmt::Expr(ExprStmt {
+                            expr: Expr::Literal(Literal::Identifier("zero".to_string())),
+                        })),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Variant(
+                            "Some".to_string(),
+                            vec![Pattern::Identifier("x".to_string())],
+                        ),
+                        body: Box::new(Stmt::Expr(ExprStmt {
+                            expr: Expr::Literal(Literal::Identifier("x".to_string())),
+                        })),
+                    },
+                ],
             })],
         };
 

@@ -24,10 +24,13 @@ impl AsmGenerator {
             "_start:".to_string(),
         ];
 
-        let has_main = program
-            .stmts
-            .iter()
-            .any(|stmt| matches!(stmt, Stmt::Fun(fun) if fun.name == "main"));
+        let has_main = program.stmts.iter().any(|stmt| match stmt {
+            Stmt::Fun(fun) => fun.name == "main",
+            Stmt::Pub(pub_stmt) => {
+                matches!(pub_stmt.stmt.as_ref(), Stmt::Fun(fun) if fun.name == "main")
+            }
+            _ => false,
+        });
 
         if has_main {
             lines.push("    call main".to_string());
@@ -46,11 +49,25 @@ impl AsmGenerator {
                 Stmt::Import(_) => {
                     lines.push("; import statement ignored by asm backend".to_string())
                 }
+                Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                    Stmt::Fun(fun_stmt) => self.emit_function(fun_stmt, &mut lines),
+                    _ => lines.push("; pub statement ignored by asm backend".to_string()),
+                },
+                Stmt::Mod(_) => lines.push("; mod statement ignored by asm backend".to_string()),
+                Stmt::Use(_) => lines.push("; use statement ignored by asm backend".to_string()),
                 Stmt::Class(_) => {
                     lines.push("; class statement ignored by asm backend".to_string())
                 }
                 Stmt::Const(_) => {
                     lines.push("; top-level const ignored by asm backend".to_string())
+                }
+                Stmt::Struct(_) => {
+                    lines.push("; struct statement ignored by asm backend".to_string())
+                }
+                Stmt::Enum(_) => lines.push("; enum statement ignored by asm backend".to_string()),
+                Stmt::Impl(_) => lines.push("; impl statement ignored by asm backend".to_string()),
+                Stmt::Match(_) => {
+                    lines.push("; match statement ignored by asm backend".to_string())
                 }
                 _ => lines.push("; top-level statement ignored by asm backend".to_string()),
             }
@@ -139,7 +156,14 @@ impl AsmGenerator {
                 }
                 lines.push(format!("    jmp {}", ctx.epilogue_label));
             }
+            Stmt::Pub(pub_stmt) => self.emit_stmt(pub_stmt.stmt.as_ref(), ctx, lines),
+            Stmt::Mod(_) => lines.push("    ; mod ignored in function scope".to_string()),
+            Stmt::Use(_) => lines.push("    ; use ignored in function scope".to_string()),
             Stmt::Import(_) => lines.push("    ; import ignored in function scope".to_string()),
+            Stmt::Struct(_) => lines.push("    ; struct ignored in function scope".to_string()),
+            Stmt::Enum(_) => lines.push("    ; enum ignored in function scope".to_string()),
+            Stmt::Impl(_) => lines.push("    ; impl ignored in function scope".to_string()),
+            Stmt::Match(_) => lines.push("    ; match ignored in function scope".to_string()),
             Stmt::Class(_) => lines.push("    ; class ignored in function scope".to_string()),
             Stmt::Fun(_) => lines.push("    ; nested function ignored".to_string()),
             Stmt::Empty => {}
@@ -433,6 +457,13 @@ fn collect_locals(stmt: &Stmt, locals: &mut BTreeSet<String>) {
             }
             collect_expr_locals(&for_stmt.iterator, locals);
             collect_locals(for_stmt.body.as_ref(), locals);
+        }
+        Stmt::Pub(pub_stmt) => collect_locals(pub_stmt.stmt.as_ref(), locals),
+        Stmt::Match(match_stmt) => {
+            collect_expr_locals(&match_stmt.expr, locals);
+            for arm in &match_stmt.arms {
+                collect_locals(arm.body.as_ref(), locals);
+            }
         }
         Stmt::Return(ret) => collect_expr_locals(&ret.return_expr, locals),
         Stmt::Expr(expr_stmt) => collect_expr_locals(&expr_stmt.expr, locals),

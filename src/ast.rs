@@ -18,9 +18,16 @@ pub enum Expr {
 pub enum Stmt {
     Block(BlockStmt),
     Expr(ExprStmt),
+    Pub(PubStmt),
+    Mod(ModStmt),
+    Use(UseStmt),
     Var(VarStmt),
     Const(ConstStmt),
+    Struct(StructStmt),
+    Enum(EnumStmt),
+    Impl(ImplStmt),
     If(IfStmt),
+    Match(MatchStmt),
     While(WhileStmt),
     For(ForStmt),
     Break(BreakStmt),
@@ -43,6 +50,21 @@ pub struct ExprStmt {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct PubStmt {
+    pub stmt: Box<Stmt>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ModStmt {
+    pub name: String,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct UseStmt {
+    pub path: String,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct VarStmt {
     pub name: String,
     pub assignment: Expr,
@@ -57,10 +79,60 @@ pub struct ConstStmt {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct StructStmt {
+    pub name: String,
+    pub fields: Vec<FieldDecl>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct FieldDecl {
+    pub name: String,
+    pub field_type: Type,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct EnumStmt {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub arguments: Vec<Type>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ImplStmt {
+    pub name: String,
+    pub methods: Vec<Stmt>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct IfStmt {
     pub condition: Expr,
     pub then_block: Box<Stmt>,
     pub else_block: Box<Stmt>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct MatchStmt {
+    pub expr: Expr,
+    pub arms: Vec<MatchArm>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Box<Stmt>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Pattern {
+    Wildcard,
+    Literal(Literal),
+    Identifier(String),
+    Variant(String, Vec<Pattern>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -130,6 +202,7 @@ pub struct ArrayExpr {
 pub struct ImportStmt {
     pub import: String,
     pub from: String,
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
