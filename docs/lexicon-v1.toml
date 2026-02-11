@@ -1,0 +1,52 @@
+[meta]
+name = "kek-v1"
+version = "1.0.0"
+frozen_on = "2026-02-11"
+
+[compatibility]
+legacy_param_style = "Type name"
+legacy_return_style = "fun x(...): Type"
+legacy_window_start = "2026-02-11"
+legacy_window_end = "2026-09-30"
+legacy_diagnostic_level = "warning"
+
+[keywords]
+values = [
+  "import", "from", "as", "pub", "mod", "use", "const", "var", "fun",
+  "struct", "enum", "impl", "class", "if", "else", "match", "while",
+  "for", "in", "break", "continue", "return", "true", "false", "None",
+  "this", "super"
+]
+
+[operators]
+# Longest-first priority should be used by lexer when prefixes overlap.
+priority = [
+  "->", "=>", "==", "!=", "<=", ">=", "&&", "||", "<<", ">>",
+  "+=", "-=", "*=", "/=", "%=",
+  "+", "-", "*", "/", "%", "=", "<", ">", "!", "&", "|", "^", "?"
+]
+
+assignment = ["=", "+=", "-=", "*=", "/=", "%="]
+comparison = ["==", "!=", "<", "<=", ">", ">="]
+logical = ["&&", "||", "!"]
+bitwise = ["&", "|", "^", "<<", ">>"]
+call_and_member = [".", "(", ")", "[", "]"]
+
+[punctuation]
+values = ["(", ")", "{", "}", "[", "]", ",", ".", ":", ";", "::"]
+
+[literals]
+number_decimal_regex = "[0-9]+(\\.[0-9]+)?"
+number_hex_regex = "0x[0-9A-Fa-f]+"
+string_delimiter = '"'
+char_delimiter = "'"
+string_escapes = ["\\n", "\\r", "\\t", "\\\"", "\\\\"]
+char_escapes = ["\\n", "\\r", "\\t", "\\'", "\\\\"]
+
+[identifier]
+regex = "[A-Za-z_][A-Za-z0-9_]*"
+
+[comments]
+line = "//"
+block_start = "/*"
+block_end = "*/"

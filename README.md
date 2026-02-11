@@ -11,3 +11,7 @@ cargo run -- example/function.kek --target asm
 ```
 
 This prints generated output to stdout.
+
+## Kek v1 freeze artifacts
+- Spec: `/Users/vlad/workspace/rusty/kekar/docs/kek-v1.md`
+- Lexicon source of truth: `/Users/vlad/workspace/rusty/kekar/docs/lexicon-v1.toml`
