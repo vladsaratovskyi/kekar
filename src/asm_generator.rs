@@ -1,7 +1,9 @@
 use std::collections::{BTreeSet, HashMap};
 
 use crate::{
-    ast::{BlockStmt, Expr, ForStmt, FunStmt, IfStmt, Literal, Stmt, VarStmt},
+    ast::{
+        BlockStmt, ConstStmt, Expr, ForStmt, FunStmt, IfStmt, Literal, Stmt, VarStmt, WhileStmt,
+    },
     lexer::Token,
 };
 
@@ -46,6 +48,9 @@ impl AsmGenerator {
                 }
                 Stmt::Class(_) => {
                     lines.push("; class statement ignored by asm backend".to_string())
+                }
+                Stmt::Const(_) => {
+                    lines.push("; top-level const ignored by asm backend".to_string())
                 }
                 _ => lines.push("; top-level statement ignored by asm backend".to_string()),
             }
@@ -113,11 +118,19 @@ impl AsmGenerator {
                 }
             }
             Stmt::Var(var_stmt) => self.emit_var(var_stmt, ctx, lines),
+            Stmt::Const(const_stmt) => self.emit_const(const_stmt, ctx, lines),
             Stmt::Expr(expr_stmt) => {
                 self.emit_expr(&expr_stmt.expr, ctx, lines);
             }
             Stmt::If(if_stmt) => self.emit_if(if_stmt, ctx, lines),
+            Stmt::While(while_stmt) => self.emit_while(while_stmt, ctx, lines),
             Stmt::For(for_stmt) => self.emit_for(for_stmt, ctx, lines),
+            Stmt::Break(_) => {
+                lines.push("    ; break is not implemented in asm backend".to_string())
+            }
+            Stmt::Continue(_) => {
+                lines.push("    ; continue is not implemented in asm backend".to_string())
+            }
             Stmt::Return(return_stmt) => {
                 if matches!(return_stmt.return_expr, Expr::Empty) {
                     lines.push("    mov rax, 0".to_string());
@@ -150,6 +163,24 @@ impl AsmGenerator {
         }
     }
 
+    fn emit_const(
+        &mut self,
+        const_stmt: &ConstStmt,
+        ctx: &mut FunctionContext,
+        lines: &mut Vec<String>,
+    ) {
+        self.emit_expr(&const_stmt.assignment, ctx, lines);
+
+        if let Some(offset) = ctx.var_offsets.get(&const_stmt.name) {
+            lines.push(format!("    mov QWORD [rbp-{}], rax", offset));
+        } else {
+            lines.push(format!(
+                "    ; const '{}' is missing stack slot in asm backend",
+                const_stmt.name
+            ));
+        }
+    }
+
     fn emit_if(&mut self, if_stmt: &IfStmt, ctx: &mut FunctionContext, lines: &mut Vec<String>) {
         let else_label = self.new_label("else");
         let end_label = self.new_label("ifend");
@@ -164,6 +195,25 @@ impl AsmGenerator {
         lines.push(format!("{}:", else_label));
         self.emit_stmt(if_stmt.else_block.as_ref(), ctx, lines);
 
+        lines.push(format!("{}:", end_label));
+    }
+
+    fn emit_while(
+        &mut self,
+        while_stmt: &WhileStmt,
+        ctx: &mut FunctionContext,
+        lines: &mut Vec<String>,
+    ) {
+        let loop_label = self.new_label("while_loop");
+        let end_label = self.new_label("while_end");
+
+        lines.push(format!("{}:", loop_label));
+        self.emit_expr(&while_stmt.condition, ctx, lines);
+        lines.push("    cmp rax, 0".to_string());
+        lines.push(format!("    je {}", end_label));
+
+        self.emit_stmt(while_stmt.body.as_ref(), ctx, lines);
+        lines.push(format!("    jmp {}", loop_label));
         lines.push(format!("{}:", end_label));
     }
 
@@ -309,6 +359,9 @@ impl AsmGenerator {
             Literal::Num(n) => {
                 lines.push(format!("    mov rax, {}", *n as i64));
             }
+            Literal::Char(c) => {
+                lines.push(format!("    mov rax, {}", *c as u32));
+            }
             Literal::Bool(v) => {
                 lines.push(format!("    mov rax, {}", if *v { 1 } else { 0 }));
             }
@@ -360,10 +413,18 @@ fn collect_locals(stmt: &Stmt, locals: &mut BTreeSet<String>) {
             locals.insert(var_stmt.name.clone());
             collect_expr_locals(&var_stmt.assignment, locals);
         }
+        Stmt::Const(const_stmt) => {
+            locals.insert(const_stmt.name.clone());
+            collect_expr_locals(&const_stmt.assignment, locals);
+        }
         Stmt::If(if_stmt) => {
             collect_expr_locals(&if_stmt.condition, locals);
             collect_locals(if_stmt.then_block.as_ref(), locals);
             collect_locals(if_stmt.else_block.as_ref(), locals);
+        }
+        Stmt::While(while_stmt) => {
+            collect_expr_locals(&while_stmt.condition, locals);
+            collect_locals(while_stmt.body.as_ref(), locals);
         }
         Stmt::For(for_stmt) => {
             locals.insert(for_stmt.item.clone());

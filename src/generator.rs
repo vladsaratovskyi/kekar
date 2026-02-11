@@ -1,5 +1,8 @@
 use crate::{
-    ast::{BlockStmt, Expr, ForStmt, FunStmt, IfStmt, ImportStmt, Literal, Stmt, VarStmt},
+    ast::{
+        BlockStmt, ConstStmt, Expr, ForStmt, FunStmt, IfStmt, ImportStmt, Literal, Stmt, VarStmt,
+        WhileStmt,
+    },
     lexer::Token,
 };
 
@@ -67,8 +70,12 @@ impl Emitter {
             }
             Stmt::Fun(fun_stmt) => self.emit_fun(fun_stmt, in_class),
             Stmt::Var(var_stmt) => self.emit_var(var_stmt, in_class),
+            Stmt::Const(const_stmt) => self.emit_const(const_stmt),
             Stmt::If(if_stmt) => self.emit_if(if_stmt, in_class),
+            Stmt::While(while_stmt) => self.emit_while(while_stmt, in_class),
             Stmt::For(for_stmt) => self.emit_for(for_stmt, in_class),
+            Stmt::Break(_) => self.line("break;"),
+            Stmt::Continue(_) => self.line("continue;"),
             Stmt::Return(return_stmt) => {
                 if matches!(return_stmt.return_expr, Expr::Empty) {
                     self.line("return;");
@@ -138,6 +145,14 @@ impl Emitter {
         }
     }
 
+    fn emit_const(&mut self, const_stmt: &ConstStmt) {
+        self.line(&format!(
+            "const {} = {};",
+            const_stmt.name,
+            self.expr_to_js(&const_stmt.assignment)
+        ));
+    }
+
     fn emit_if(&mut self, if_stmt: &IfStmt, in_class: bool) {
         self.line(&format!("if ({}) {{", self.expr_to_js(&if_stmt.condition)));
         self.indent += 1;
@@ -152,6 +167,17 @@ impl Emitter {
         self.line("} else {");
         self.indent += 1;
         self.emit_stmt_block_contents(&if_stmt.else_block, in_class);
+        self.indent -= 1;
+        self.line("}");
+    }
+
+    fn emit_while(&mut self, while_stmt: &WhileStmt, in_class: bool) {
+        self.line(&format!(
+            "while ({}) {{",
+            self.expr_to_js(&while_stmt.condition)
+        ));
+        self.indent += 1;
+        self.emit_stmt_block_contents(&while_stmt.body, in_class);
         self.indent -= 1;
         self.line("}");
     }
@@ -245,6 +271,7 @@ impl Emitter {
     fn literal_to_js(&self, literal: &Literal) -> String {
         match literal {
             Literal::String(s) => format!("\"{}\"", escape_js_string(s)),
+            Literal::Char(c) => format!("'{}'", escape_js_char(*c)),
             Literal::Num(n) => {
                 if n.fract() == 0.0 {
                     format!("{:.0}", n)
@@ -288,9 +315,20 @@ fn escape_js_string(input: &str) -> String {
         .replace('\t', "\\t")
 }
 
+fn escape_js_char(input: char) -> String {
+    match input {
+        '\\' => "\\\\".to_string(),
+        '\'' => "\\'".to_string(),
+        '\n' => "\\n".to_string(),
+        '\r' => "\\r".to_string(),
+        '\t' => "\\t".to_string(),
+        c => c.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{escape_js_string, Emitter, JsGenerator};
+    use super::{escape_js_char, escape_js_string, Emitter, JsGenerator};
     use crate::{
         ast::{
             BlockStmt, ClassStmt, Expr, FunStmt, ImportStmt, Literal, MemberExpr, Param,
@@ -350,6 +388,13 @@ mod tests {
     fn escapes_js_strings() {
         let escaped = escape_js_string("line1\n\"quoted\"\t\\");
         assert_eq!(escaped, "line1\\n\\\"quoted\\\"\\t\\\\");
+    }
+
+    #[test]
+    fn escapes_js_chars() {
+        assert_eq!(escape_js_char('\n'), "\\n");
+        assert_eq!(escape_js_char('\''), "\\'");
+        assert_eq!(escape_js_char('a'), "a");
     }
 
     #[test]

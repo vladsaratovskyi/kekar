@@ -8,7 +8,9 @@ enum Binding {
     Coma,
     Assign,
     Logic,
+    Bitwise,
     Relation,
+    Shift,
     Add,
     Mult,
     Unary,
@@ -74,6 +76,14 @@ impl Parser {
         }
     }
 
+    fn is_next_token(&self, expected: &Token) -> bool {
+        if self.current + 1 >= self.tokens.len() {
+            return false;
+        }
+
+        std::mem::discriminant(&self.tokens[self.current + 1]) == std::mem::discriminant(expected)
+    }
+
     fn parse_stmt(&mut self) -> Stmt {
         let stmt = self.handle_stmt();
 
@@ -131,6 +141,7 @@ impl Parser {
             Token::True => Expr::Literal(Literal::Bool(true)),
             Token::False => Expr::Literal(Literal::Bool(false)),
             Token::String(s) => Expr::Literal(Literal::String(s.to_string())),
+            Token::Char(c) => Expr::Literal(Literal::Char(*c)),
             Token::Identifier(i) => Expr::Literal(Literal::Identifier(i.to_string())),
             Token::This => Expr::Literal(Literal::This),
             _ => panic!(
@@ -176,6 +187,28 @@ impl Parser {
         })
     }
 
+    fn parse_const_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Const);
+        let name = self.expect_identifier_get_name();
+        let mut const_type = Type::None;
+
+        if self.current_token() == &Token::Colon {
+            self.expect(&Token::Colon);
+            const_type = self.parse_type();
+        }
+
+        self.expect(&Token::Equal);
+        let assignment = self.parse_expr(Binding::Assign);
+
+        self.expect(&Token::Semicolon);
+
+        Stmt::Const(ConstStmt {
+            name,
+            assignment,
+            const_type,
+        })
+    }
+
     fn parse_assignment_exrp(&mut self, left: Expr) -> Expr {
         let binding = self.get_current_token_power();
         self.get_token_and_move();
@@ -205,6 +238,17 @@ impl Parser {
             condition,
             then_block: Box::new(main),
             else_block: Box::new(alter),
+        })
+    }
+
+    fn parse_while_stmt(&mut self) -> Stmt {
+        self.expect(&Token::While);
+        let condition = self.parse_expr(Binding::Assign);
+        let body = self.parse_block_stmt();
+
+        Stmt::While(WhileStmt {
+            condition,
+            body: Box::new(body),
         })
     }
 
@@ -242,13 +286,7 @@ impl Parser {
         self.expect(&Token::LeftParen);
 
         while self.has_tokens() && self.current_token() != &Token::RightParen {
-            let mut param = Param {
-                name: "".to_string(),
-                param_type: Type::None,
-            };
-            param.param_type = self.parse_type();
-            param.name = self.expect_identifier_get_name();
-            params.push(param);
+            params.push(self.parse_fun_param());
 
             if !matches!(self.current_token(), &Token::RightParen | &Token::Eof) {
                 self.expect(&Token::Coma);
@@ -257,7 +295,10 @@ impl Parser {
 
         self.expect(&Token::RightParen);
 
-        if self.current_token() == &Token::Colon {
+        if self.current_token() == &Token::Arrow {
+            self.expect(&Token::Arrow);
+            fun_type = self.parse_type();
+        } else if self.current_token() == &Token::Colon {
             self.expect(&Token::Colon);
             fun_type = self.parse_type();
         }
@@ -270,6 +311,21 @@ impl Parser {
             params,
             block: Box::new(block),
         })
+    }
+
+    fn parse_fun_param(&mut self) -> Param {
+        // Canonical: name: Type
+        if self.is_next_token(&Token::Colon) {
+            let name = self.expect_identifier_get_name();
+            self.expect(&Token::Colon);
+            let param_type = self.parse_type();
+            return Param { name, param_type };
+        }
+
+        // Legacy compatibility: Type name
+        let param_type = self.parse_type();
+        let name = self.expect_identifier_get_name();
+        Param { name, param_type }
     }
 
     fn parse_fun_call_expr(&mut self, left: Expr) -> Expr {
@@ -368,6 +424,18 @@ impl Parser {
         Stmt::Return(ReturnStmt { return_expr: expr })
     }
 
+    fn parse_break_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Break);
+        self.expect(&Token::Semicolon);
+        Stmt::Break(BreakStmt)
+    }
+
+    fn parse_continue_stmt(&mut self) -> Stmt {
+        self.expect(&Token::Continue);
+        self.expect(&Token::Semicolon);
+        Stmt::Continue(ContinueStmt)
+    }
+
     fn parse_array_literal_expr(&mut self) -> Expr {
         self.expect(&Token::LeftBrace);
         let mut array = Vec::new();
@@ -390,6 +458,7 @@ impl Parser {
         match self.current_token() {
             Token::Number(_) => Some(self.parse_primary_expr()),
             Token::String(_) => Some(self.parse_primary_expr()),
+            Token::Char(_) => Some(self.parse_primary_expr()),
             Token::True => Some(self.parse_primary_expr()),
             Token::False => Some(self.parse_primary_expr()),
             Token::This => Some(self.parse_primary_expr()),
@@ -413,8 +482,12 @@ impl Parser {
         match self.current_token() {
             Token::LeftBracket => Some(self.parse_block_stmt()),
             Token::Var => Some(self.parse_var_stmt()),
+            Token::Const => Some(self.parse_const_stmt()),
             Token::If => Some(self.parse_if_stmt()),
+            Token::While => Some(self.parse_while_stmt()),
             Token::For => Some(self.parse_for_stmt()),
+            Token::Break => Some(self.parse_break_stmt()),
+            Token::Continue => Some(self.parse_continue_stmt()),
             Token::Fun => Some(self.parse_fun_stmt()),
             Token::Class => Some(self.parse_class_stmt()),
             Token::Import => Some(self.parse_import_stmt()),
@@ -432,6 +505,11 @@ impl Parser {
             Token::Star => self.parse_binary_expr(left),
             Token::Slash => self.parse_binary_expr(left),
             Token::Percent => self.parse_binary_expr(left),
+            Token::ShiftLeft => self.parse_binary_expr(left),
+            Token::ShiftRight => self.parse_binary_expr(left),
+            Token::BitAnd => self.parse_binary_expr(left),
+            Token::BitOr => self.parse_binary_expr(left),
+            Token::BitXor => self.parse_binary_expr(left),
             //Relation
             Token::NotEqual => self.parse_binary_expr(left),
             Token::EqualEqual => self.parse_binary_expr(left),
@@ -446,6 +524,9 @@ impl Parser {
             Token::Equal => self.parse_assignment_exrp(left),
             Token::PlusEqual => self.parse_assignment_exrp(left),
             Token::MinusEqual => self.parse_assignment_exrp(left),
+            Token::StarEqual => self.parse_assignment_exrp(left),
+            Token::SlashEqual => self.parse_assignment_exrp(left),
+            Token::PercentEqual => self.parse_assignment_exrp(left),
             //Call, Member
             Token::LeftParen => self.parse_fun_call_expr(left),
             Token::LeftBrace => self.parse_member_exrp(left),
@@ -462,7 +543,13 @@ impl Parser {
         match self.current_token() {
             Token::Number(_) => Binding::Primary,
             Token::String(_) => Binding::Primary,
+            Token::Char(_) => Binding::Primary,
             Token::Identifier(_) => Binding::Primary,
+            Token::ShiftLeft => Binding::Shift,
+            Token::ShiftRight => Binding::Shift,
+            Token::BitAnd => Binding::Bitwise,
+            Token::BitOr => Binding::Bitwise,
+            Token::BitXor => Binding::Bitwise,
             Token::Plus => Binding::Add,
             Token::Minus => Binding::Add,
             Token::Star => Binding::Mult,
@@ -480,6 +567,9 @@ impl Parser {
             Token::Equal => Binding::Assign,
             Token::PlusEqual => Binding::Assign,
             Token::MinusEqual => Binding::Assign,
+            Token::StarEqual => Binding::Assign,
+            Token::SlashEqual => Binding::Assign,
+            Token::PercentEqual => Binding::Assign,
             Token::LeftParen => Binding::Call,
             Token::LeftBrace => Binding::Member,
             Token::Dot => Binding::Member,
@@ -491,8 +581,11 @@ impl Parser {
         let type_name = self.expect_identifier_get_name();
         let t = match type_name.as_str() {
             "num" | "Num" => Type::Num,
+            "char" | "Char" => Type::Char,
+            "byte" | "Byte" => Type::Byte,
             "string" | "String" => Type::String,
             "bool" | "Bool" => Type::Bool,
+            "void" | "Void" => Type::Void,
             "" => Type::None,
             s => Type::Identifier(s.to_string()),
         };

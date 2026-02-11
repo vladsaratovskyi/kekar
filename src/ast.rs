@@ -19,8 +19,12 @@ pub enum Stmt {
     Block(BlockStmt),
     Expr(ExprStmt),
     Var(VarStmt),
+    Const(ConstStmt),
     If(IfStmt),
+    While(WhileStmt),
     For(ForStmt),
+    Break(BreakStmt),
+    Continue(ContinueStmt),
     Fun(FunStmt),
     Class(ClassStmt),
     Return(ReturnStmt),
@@ -46,10 +50,23 @@ pub struct VarStmt {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct ConstStmt {
+    pub name: String,
+    pub assignment: Expr,
+    pub const_type: Type,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct IfStmt {
     pub condition: Expr,
     pub then_block: Box<Stmt>,
     pub else_block: Box<Stmt>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct WhileStmt {
+    pub condition: Expr,
+    pub body: Box<Stmt>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -59,6 +76,12 @@ pub struct ForStmt {
     pub iterator: Expr,
     pub body: Box<Stmt>,
 }
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct BreakStmt;
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ContinueStmt;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunStmt {
@@ -112,6 +135,7 @@ pub struct ImportStmt {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     String(String),
+    Char(char),
     Num(f64),
     Bool(bool),
     Identifier(String),
@@ -127,8 +151,11 @@ pub struct Param {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Num,
+    Char,
+    Byte,
     String,
     Bool,
+    Void,
     Identifier(String),
     Array(Box<Type>),
     None,

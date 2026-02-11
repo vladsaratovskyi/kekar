@@ -5,8 +5,8 @@ mod tests {
 
     use kekar::{
         ast::{
-            BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt,
-            Type, VarStmt,
+            BlockStmt, BreakStmt, ClassStmt, ConstStmt, ContinueStmt, Expr, ExprStmt, ForStmt,
+            FunStmt, IfStmt, Literal, Param, Stmt, Type, VarStmt, WhileStmt,
         },
         lexer::Token,
         parser::Parser,
@@ -354,6 +354,110 @@ mod tests {
         })];
 
         let expected = BlockStmt { stmts };
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_const_stmt() {
+        let tokens = vec![
+            Token::Const,
+            Token::Identifier("MAX".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::Equal,
+            Token::Number(42.0),
+            Token::Semicolon,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![Stmt::Const(ConstStmt {
+                name: "MAX".to_string(),
+                assignment: Expr::Literal(Literal::Num(42.0)),
+                const_type: Type::Num,
+            })],
+        };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_while_break_continue() {
+        let tokens = vec![
+            Token::While,
+            Token::True,
+            Token::LeftBracket,
+            Token::Break,
+            Token::Semicolon,
+            Token::Continue,
+            Token::Semicolon,
+            Token::RightBracket,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![Stmt::While(WhileStmt {
+                condition: Expr::Literal(Literal::Bool(true)),
+                body: Box::new(Stmt::Block(BlockStmt {
+                    stmts: vec![Stmt::Break(BreakStmt), Stmt::Continue(ContinueStmt)],
+                })),
+            })],
+        };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_function_canonical_signature_and_arrow_return() {
+        let tokens = vec![
+            Token::Fun,
+            Token::Identifier("main".to_string()),
+            Token::LeftParen,
+            Token::Identifier("input".to_string()),
+            Token::Colon,
+            Token::Identifier("String".to_string()),
+            Token::Coma,
+            Token::Identifier("count".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Void".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Semicolon,
+            Token::RightBracket,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![Stmt::Fun(FunStmt {
+                name: "main".to_string(),
+                return_type: Type::Void,
+                params: vec![
+                    Param {
+                        name: "input".to_string(),
+                        param_type: Type::String,
+                    },
+                    Param {
+                        name: "count".to_string(),
+                        param_type: Type::Num,
+                    },
+                ],
+                block: Box::new(Stmt::Block(BlockStmt {
+                    stmts: vec![Stmt::Return(kekar::ast::ReturnStmt {
+                        return_expr: Expr::Empty,
+                    })],
+                })),
+            })],
+        };
+
         assert_eq!(result, expected);
     }
 }
