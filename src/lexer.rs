@@ -5,26 +5,61 @@ use std::fs::{self};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Single-character tokens.
-    LeftParen, RightParen, LeftBracket, RightBracket,
-    Coma, Dot, Minus, Plus, Semicolon, Slash, Star,
-    Percent, PlusEqual, MinusEqual, Colon, LeftBrace,
+    LeftParen,
+    RightParen,
+    LeftBracket,
+    RightBracket,
+    Coma,
+    Dot,
+    Minus,
+    Plus,
+    Semicolon,
+    Slash,
+    Star,
+    Percent,
+    PlusEqual,
+    MinusEqual,
+    Colon,
+    LeftBrace,
     RightBrace,
 
     // One or two character tokens.
-    Not, NotEqual,
-    Equal, EqualEqual,
-    Greater, GreaterEqual,
-    Less, LessEqual,
+    Not,
+    NotEqual,
+    Equal,
+    EqualEqual,
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
 
     // Literals.
-    Identifier(String), String(String), Number(f64),
+    Identifier(String),
+    String(String),
+    Number(f64),
 
     // Keywords.
-    And, Class, Else, False, Fun, For, If, In, None, Or,
-    Print, Return, Super, This, True, Var, While, Import,
+    And,
+    Class,
+    Else,
+    False,
+    Fun,
+    For,
+    If,
+    In,
+    None,
+    Or,
+    Print,
+    Return,
+    Super,
+    This,
+    True,
+    Var,
+    While,
+    Import,
     From,
 
-    Eof
+    Eof,
 }
 
 impl Display for Token {
@@ -36,7 +71,7 @@ impl Display for Token {
 fn get_keyword(key: &str) -> Option<Token> {
     match key {
         "var" => Some(Token::Var),
-        "class"=> Some(Token::Class),
+        "class" => Some(Token::Class),
         "else" => Some(Token::Else),
         "fun" => Some(Token::Fun),
         "for" => Some(Token::For),
@@ -58,7 +93,7 @@ fn get_keyword(key: &str) -> Option<Token> {
         "lt" => Some(Token::Less),
         "import" => Some(Token::Import),
         "from" => Some(Token::From),
-        s => Some(Token::Identifier(s.to_string()))
+        s => Some(Token::Identifier(s.to_string())),
     }
 }
 
@@ -76,34 +111,51 @@ pub struct Lexer {
     current: usize,
     start: usize,
     line: usize,
-    source: String
+    source: String,
 }
 
 impl Lexer {
     pub fn new(path_to_file: &String) -> Self {
         Self {
             source: fs::read_to_string(path_to_file).expect("Could not read file."),
-            current : 0,
-            start : 0,
-            line : 0
+            current: 0,
+            start: 0,
+            line: 0,
+        }
+    }
+
+    pub fn from_source(source: impl Into<String>) -> Self {
+        Self {
+            source: source.into(),
+            current: 0,
+            start: 0,
+            line: 0,
         }
     }
 
     fn check_second_char(&mut self, char: char) -> bool {
-        if self.is_end() { return false }
-        if self.source.as_bytes()[self.current] as char != char { return false }
+        if self.is_end() {
+            return false;
+        }
+        if self.source.as_bytes()[self.current] as char != char {
+            return false;
+        }
 
         self.current += 1;
         true
     }
 
     fn peek_char(&mut self) -> char {
-        if self.is_end() { return '\0'}
+        if self.is_end() {
+            return '\0';
+        }
         self.source.as_bytes()[self.current] as char
     }
 
     fn peek_next_char(&mut self) -> char {
-        if self.is_end() { return '\0' }
+        if self.is_end() {
+            return '\0';
+        }
         self.source.as_bytes()[self.current + 1] as char
     }
 
@@ -120,14 +172,18 @@ impl Lexer {
     fn get_value(&self) -> String {
         self.source[self.start..self.current].to_string()
     }
-    
+
     fn get_num_value(&self) -> f64 {
-        self.source[self.start..self.current].parse::<f64>().unwrap()
+        self.source[self.start..self.current]
+            .parse::<f64>()
+            .unwrap()
     }
 
     fn parse_string(&mut self) -> Option<Token> {
         while self.peek_char() != '"' && !self.is_end() {
-            if self.peek_char() == '\n' { self.line += 1 }
+            if self.peek_char() == '\n' {
+                self.line += 1
+            }
             self.move_next();
         }
 
@@ -136,27 +192,38 @@ impl Lexer {
         }
 
         self.move_next();
-        Some(Token::String(self.get_value()))
+        Some(Token::String(
+            self.source[self.start + 1..self.current - 1].to_string(),
+        ))
     }
 
     fn parse_number(&mut self) -> Option<Token> {
-        while is_num(self.peek_char()) { self.move_next(); continue; }
+        while is_num(self.peek_char()) {
+            self.move_next();
+            continue;
+        }
 
         if self.peek_char() == '.' && is_num(self.peek_next_char()) {
             self.move_next();
-            while is_num(self.peek_char()) { self.move_next(); continue; }
+            while is_num(self.peek_char()) {
+                self.move_next();
+                continue;
+            }
         }
 
         Some(Token::Number(self.get_num_value()))
     }
 
     fn parse_word(&mut self) -> Option<Token> {
-        while is_letter(self.peek_char()) { self.move_next(); continue; }
+        while is_letter(self.peek_char()) || is_num(self.peek_char()) {
+            self.move_next();
+            continue;
+        }
 
         let value = self.get_value();
         get_keyword(&value)
     }
- 
+
     fn scan_token(&mut self) -> Option<Token> {
         let char = self.move_next();
         match char {
@@ -175,7 +242,7 @@ impl Lexer {
                 } else {
                     Some(Token::Minus)
                 }
-            },
+            }
             '+' => {
                 let second = self.check_second_char('=');
                 if second {
@@ -183,7 +250,7 @@ impl Lexer {
                 } else {
                     Some(Token::Plus)
                 }
-            },
+            }
             ';' => Some(Token::Semicolon),
             ':' => Some(Token::Colon),
             '*' => Some(Token::Star),
@@ -195,7 +262,7 @@ impl Lexer {
                 } else {
                     Some(Token::Not)
                 }
-            },
+            }
             '=' => {
                 let second = self.check_second_char('=');
                 if second {
@@ -203,7 +270,7 @@ impl Lexer {
                 } else {
                     Some(Token::Equal)
                 }
-            },
+            }
             '>' => {
                 let res = self.check_second_char('=');
                 if res {
@@ -211,7 +278,7 @@ impl Lexer {
                 } else {
                     Some(Token::Greater)
                 }
-            },
+            }
             '<' => {
                 let res = self.check_second_char('=');
                 if res {
@@ -219,7 +286,7 @@ impl Lexer {
                 } else {
                     Some(Token::Less)
                 }
-            },
+            }
             '/' => {
                 let res = self.check_second_char('/');
                 if res {
@@ -230,14 +297,12 @@ impl Lexer {
                 } else {
                     Some(Token::Slash)
                 }
-            },
-            '"' => {
-                self.parse_string()
-            },
+            }
+            '"' => self.parse_string(),
             '\n' => {
                 self.line += 1;
                 None
-            },
+            }
             c => {
                 if is_num(c) {
                     self.parse_number()
@@ -251,18 +316,16 @@ impl Lexer {
     }
 
     pub fn lex_file(&mut self) -> Vec<Token> {
-        println!("========= File Contents =========");
-        println!("{}", self.source);
-        println!("========= ============= =========");
-    
         let mut tokens: Vec<Token> = Vec::new();
-    
+
         while !self.is_end() {
             self.start = self.current;
             let token = self.scan_token();
-            if let Some(t) = token { tokens.push(t) }
+            if let Some(t) = token {
+                tokens.push(t)
+            }
         }
-    
+
         tokens.push(Token::Eof);
         tokens
     }

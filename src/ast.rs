@@ -11,7 +11,7 @@ pub enum Expr {
     Mebmer(MemberExpr),
     ComputedExpr(ComputedExpr),
     Array(ArrayExpr),
-    Empty
+    Empty,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -25,39 +25,39 @@ pub enum Stmt {
     Class(ClassStmt),
     Return(ReturnStmt),
     Import(ImportStmt),
-    Empty
+    Empty,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct BlockStmt {
-    pub stmts: Vec<Stmt>
+    pub stmts: Vec<Stmt>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ExprStmt {
-    pub expr: Expr
+    pub expr: Expr,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct VarStmt {
     pub name: String,
     pub assignment: Expr,
-    pub var_type: Type
+    pub var_type: Type,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct IfStmt {
     pub condition: Expr,
     pub then_block: Box<Stmt>,
-    pub else_block: Box<Stmt>
+    pub else_block: Box<Stmt>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ForStmt {
     pub item: String,
-    pub use_index: bool,
+    pub index: Option<String>,
     pub iterator: Expr,
-    pub body: Box<Stmt>
+    pub body: Box<Stmt>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -71,42 +71,42 @@ pub struct FunStmt {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ReturnStmt {
-    pub return_expr: Expr
+    pub return_expr: Expr,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ClassStmt {
     pub name: String,
-    pub block: Box<Stmt>
+    pub block: Box<Stmt>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct CallExpr {
     pub method_name: String,
-    pub arguments: Vec<Expr>
+    pub arguments: Vec<Expr>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct MemberExpr {
     pub member: Box<Expr>,
-    pub property: String
+    pub property: String,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ComputedExpr {
     pub member: Box<Expr>,
-    pub property: Box<Expr>
+    pub property: Box<Expr>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ArrayExpr {
-    pub array: Vec<Expr>
+    pub array: Vec<Expr>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ImportStmt {
     pub import: String,
-    pub from: String
+    pub from: String,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -115,13 +115,13 @@ pub enum Literal {
     Num(f64),
     Bool(bool),
     Identifier(String),
-    This
+    This,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Param {
     pub name: String,
-    pub param_type: Type
+    pub param_type: Type,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -131,5 +131,5 @@ pub enum Type {
     Bool,
     Identifier(String),
     Array(Box<Type>),
-    None
+    None,
 }

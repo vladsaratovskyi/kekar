@@ -1,6 +1,6 @@
 #![allow(unused)]
-use core::panic;
 use crate::{ast::*, lexer::Token};
+use core::panic;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum Binding {
@@ -213,15 +213,14 @@ impl Parser {
         //initialize with some values
         let mut for_stmt = ForStmt {
             item: self.expect_identifier_get_name(),
-            use_index: false,
+            index: None,
             iterator: Expr::Empty,
             body: Box::new(Stmt::Empty),
         };
 
         if self.current_token() == &Token::Coma {
             self.expect(&Token::Coma);
-            self.expect(&Token::Identifier("any".to_string()));
-            for_stmt.use_index = true;
+            for_stmt.index = Some(self.expect_identifier_get_name());
         }
 
         self.expect(&Token::In);
@@ -358,7 +357,11 @@ impl Parser {
     fn parse_return_stmt(&mut self) -> Stmt {
         self.expect(&Token::Return);
 
-        let expr = self.parse_expr(Binding::Def);
+        let expr = if self.current_token() == &Token::Semicolon {
+            Expr::Empty
+        } else {
+            self.parse_expr(Binding::Def)
+        };
 
         self.expect(&Token::Semicolon);
 
@@ -912,7 +915,7 @@ mod tests {
 
         let expected = Stmt::For(ForStmt {
             item: "num".to_string(),
-            use_index: true,
+            index: Some("index".to_string()),
             iterator: Expr::Literal(Literal::Identifier("nums".to_string())),
             body: Box::new(Stmt::Block(BlockStmt {
                 stmts: vec![Stmt::Var(VarStmt {

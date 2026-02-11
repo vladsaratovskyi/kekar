@@ -3,7 +3,14 @@ mod tests {
 
     use std::vec;
 
-    use kekar::{ast::{BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt, Type, VarStmt}, lexer::Token, parser::Parser};
+    use kekar::{
+        ast::{
+            BlockStmt, ClassStmt, Expr, ExprStmt, ForStmt, FunStmt, IfStmt, Literal, Param, Stmt,
+            Type, VarStmt,
+        },
+        lexer::Token,
+        parser::Parser,
+    };
 
     #[test]
     fn parse_addition() {
@@ -203,7 +210,7 @@ mod tests {
         let stmts = vec![Stmt::Block(BlockStmt {
             stmts: vec![Stmt::For(ForStmt {
                 item: "num".to_string(),
-                use_index: true,
+                index: Some("index".to_string()),
                 iterator: Expr::Literal(Literal::Identifier("nums".to_string())),
                 body: Box::new(Stmt::Block(BlockStmt {
                     stmts: vec![Stmt::Var(VarStmt {
@@ -334,7 +341,9 @@ mod tests {
                         block: Box::new(Stmt::Block(BlockStmt {
                             stmts: vec![Stmt::Expr(ExprStmt {
                                 expr: Expr::Assignment(
-                                    Box::new(Expr::Literal(Literal::Identifier("name".to_string()))),
+                                    Box::new(Expr::Literal(Literal::Identifier(
+                                        "name".to_string(),
+                                    ))),
                                     Box::new(Expr::Literal(Literal::String("Living".to_string()))),
                                 ),
                             })],

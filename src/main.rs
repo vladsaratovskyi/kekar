@@ -1,10 +1,6 @@
 use std::env;
-mod ast;
-mod lexer;
-mod generator;
 
-use generator::AsmGenerator;
-use kekar::{lexer::Lexer, parser::Parser};
+use kekar::{asm_generator::AsmGenerator, generator::JsGenerator, lexer::Lexer, parser::Parser};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -13,17 +9,51 @@ fn main() {
         std::process::exit(69);
     }
 
-    println!("Path to file {}", args[1]);
+    let mut target = "js".to_string();
+    let mut path: Option<String> = None;
+    let mut i = 1;
 
-    let mut lexer = Lexer::new(&args[1]);
+    while i < args.len() {
+        match args[i].as_str() {
+            "--target" | "-t" => {
+                if i + 1 >= args.len() {
+                    eprintln!("Missing value for --target");
+                    std::process::exit(2);
+                }
+                target = args[i + 1].clone();
+                i += 2;
+                continue;
+            }
+            arg if arg.starts_with("--target=") => {
+                target = arg.trim_start_matches("--target=").to_string();
+            }
+            arg if !arg.starts_with('-') && path.is_none() => {
+                path = Some(arg.to_string());
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let Some(path) = path else {
+        eprintln!("Usage: kekar <source.kek> [--target js|asm]");
+        std::process::exit(2);
+    };
+
+    let mut lexer = Lexer::new(&path);
     let tokens = lexer.lex_file();
 
     let mut parser = Parser::new(tokens);
     let ast = parser.parse();
 
-    //dbg!(ast.clone());
-    let generator = AsmGenerator::new();
-    let assembly = generator.generate_asm(ast);
+    let output = match target.as_str() {
+        "js" => JsGenerator::new().generate(&ast),
+        "asm" => AsmGenerator::new().generate(&ast),
+        other => {
+            eprintln!("Unsupported target '{}'. Use 'js' or 'asm'.", other);
+            std::process::exit(2);
+        }
+    };
 
-    println!("{}", assembly);
+    println!("{}", output);
 }
