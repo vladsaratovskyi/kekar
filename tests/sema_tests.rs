@@ -149,3 +149,266 @@ return 1;
 
     assert_has_error(source, "'return' used outside of function");
 }
+
+#[test]
+fn sema_accepts_resolved_mod_use_import() {
+    let source = r#"
+mod core;
+import System as Sys from "../src/system.kek";
+use core::fmt;
+use Sys::io;
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}
+
+#[test]
+fn sema_rejects_unresolved_use_root() {
+    let source = r#"
+use missing::io;
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Unresolved use path root 'missing'");
+}
+
+#[test]
+fn sema_rejects_pub_use_of_private_root() {
+    let source = r#"
+mod internal;
+pub use internal::api;
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Cannot publicly re-export private root 'internal'");
+}
+
+#[test]
+fn sema_accepts_pub_use_of_public_root() {
+    let source = r#"
+pub mod api;
+pub use api::client;
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}
+
+#[test]
+fn sema_rejects_unknown_struct_field_type() {
+    let source = r#"
+struct User {
+    id: Missing;
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Unknown type in field 'User.id' type");
+}
+
+#[test]
+fn sema_rejects_impl_for_undeclared_type() {
+    let source = r#"
+impl Ghost {
+    fun value() -> Num {
+        return 0;
+    }
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Impl target type 'Ghost' is not declared");
+}
+
+#[test]
+fn sema_rejects_duplicate_impl_methods() {
+    let source = r#"
+struct Point {
+    x: Num;
+}
+
+impl Point {
+    fun len() -> Num {
+        return 1;
+    }
+
+    fun len() -> Num {
+        return 2;
+    }
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Duplicate method 'len' in impl 'Point'");
+}
+
+#[test]
+fn sema_rejects_public_method_on_private_type() {
+    let source = r#"
+struct Hidden {
+    value: Num;
+}
+
+impl Hidden {
+    pub fun expose() -> Num {
+        return 0;
+    }
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(
+        source,
+        "Cannot expose public method 'expose' on private type 'Hidden'",
+    );
+}
+
+#[test]
+fn sema_rejects_local_pub_declaration() {
+    let source = r#"
+fun main() -> Num {
+    pub const VALUE: Num = 1;
+    return VALUE;
+}
+"#;
+
+    assert_has_error(
+        source,
+        "'pub' is only allowed on top-level declarations and impl methods",
+    );
+}
+
+#[test]
+fn sema_rejects_match_pattern_type_mismatch() {
+    let source = r#"
+fun main() -> Num {
+    var value: Num = 1;
+    match value {
+        true => { return 1; },
+        _ => { return 0; }
+    }
+}
+"#;
+
+    assert_has_error(source, "Match pattern type mismatch");
+}
+
+#[test]
+fn sema_rejects_non_exhaustive_bool_match() {
+    let source = r#"
+fun main() -> Num {
+    var flag: Bool = true;
+    match flag {
+        true => { return 1; }
+    }
+    return 0;
+}
+"#;
+
+    assert_has_error(
+        source,
+        "Non-exhaustive match for Bool: expected true and false arms",
+    );
+}
+
+#[test]
+fn sema_rejects_non_exhaustive_enum_match() {
+    let source = r#"
+enum Maybe {
+    Some(Num),
+    Empty
+}
+
+fun eval(x: Maybe) -> Num {
+    match x {
+        Some(v) => { return v; }
+    }
+    return 0;
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Non-exhaustive match for enum 'Maybe'");
+}
+
+#[test]
+fn sema_rejects_variant_pattern_argument_type_mismatch() {
+    let source = r#"
+enum Maybe {
+    Some(Num),
+    Empty
+}
+
+fun eval(x: Maybe) -> Num {
+    match x {
+        Some(true) => { return 1; },
+        Empty() => { return 0; }
+    }
+    return 0;
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(
+        source,
+        "Match pattern type mismatch: expected Num, got Bool",
+    );
+}
+
+#[test]
+fn sema_accepts_exhaustive_enum_match() {
+    let source = r#"
+enum Maybe {
+    Some(Num),
+    Empty
+}
+
+fun eval(x: Maybe) -> Num {
+    match x {
+        Some(v) => { return v; },
+        Empty() => { return 0; }
+    }
+    return 0;
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}

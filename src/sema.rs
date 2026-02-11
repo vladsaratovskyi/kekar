@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::{
-        BlockStmt, Expr, ForStmt, FunStmt, IfStmt, Literal, MatchStmt, Pattern, Stmt, Type,
-        VarStmt, WhileStmt,
+        BlockStmt, ClassStmt, EnumStmt, Expr, ForStmt, FunStmt, IfStmt, ImportStmt, Literal,
+        MatchStmt, ModStmt, Pattern, Stmt, StructStmt, Type, UseStmt, VarStmt, WhileStmt,
     },
     lexer::Token,
 };
@@ -33,11 +33,60 @@ struct FunctionSig {
     return_type: Type,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Visibility {
+    Public,
+    Private,
+}
+
+#[derive(Debug, Clone)]
+struct ImportBinding {
+    visibility: Visibility,
+}
+
+#[derive(Debug, Clone)]
+struct UseBinding {
+    visibility: Visibility,
+    path: String,
+    root: String,
+}
+
+#[derive(Debug, Clone)]
+struct StructDef {
+    visibility: Visibility,
+    fields: HashMap<String, Type>,
+}
+
+#[derive(Debug, Clone)]
+struct EnumDef {
+    visibility: Visibility,
+    variants: HashMap<String, Vec<Type>>,
+}
+
+#[derive(Debug, Clone)]
+struct ClassDef {
+    visibility: Visibility,
+}
+
+#[derive(Debug, Clone)]
+enum TypeDef {
+    Struct(StructDef),
+    Enum(EnumDef),
+    Class(ClassDef),
+}
+
 pub struct SemanticAnalyzer {
     errors: Vec<SemanticError>,
     scopes: Vec<HashMap<String, Symbol>>,
     functions: HashMap<String, FunctionSig>,
+    function_visibility: HashMap<String, Visibility>,
+    modules: HashMap<String, Visibility>,
+    imports: HashMap<String, ImportBinding>,
+    uses: HashMap<String, UseBinding>,
+    type_defs: HashMap<String, TypeDef>,
+    impl_methods: HashMap<String, HashMap<String, Visibility>>,
     current_return_type: Option<Type>,
+    current_impl_type: Option<String>,
     loop_depth: usize,
 }
 
@@ -47,7 +96,14 @@ impl SemanticAnalyzer {
             errors: Vec::new(),
             scopes: vec![HashMap::new()],
             functions: HashMap::new(),
+            function_visibility: HashMap::new(),
+            modules: HashMap::new(),
+            imports: HashMap::new(),
+            uses: HashMap::new(),
+            type_defs: HashMap::new(),
+            impl_methods: HashMap::new(),
             current_return_type: None,
+            current_impl_type: None,
             loop_depth: 0,
         }
     }
@@ -64,13 +120,15 @@ impl SemanticAnalyzer {
     }
 
     pub fn analyze_program(&mut self, program: &BlockStmt) {
-        self.collect_function_signatures(program);
+        self.collect_top_level_declarations(program);
+        self.validate_use_bindings();
 
         for stmt in &program.stmts {
-            self.analyze_stmt(stmt);
+            self.analyze_top_level_stmt(stmt);
         }
     }
 
+    #[cfg(test)]
     fn collect_function_signatures(&mut self, program: &BlockStmt) {
         for stmt in &program.stmts {
             match stmt {
@@ -78,10 +136,85 @@ impl SemanticAnalyzer {
                 Stmt::Pub(pub_stmt) => {
                     if let Stmt::Fun(fun) = pub_stmt.stmt.as_ref() {
                         self.register_function_signature(fun);
+                        self.function_visibility
+                            .insert(fun.name.clone(), Visibility::Public);
                     }
                 }
                 _ => {}
             }
+        }
+    }
+
+    fn collect_top_level_declarations(&mut self, program: &BlockStmt) {
+        for stmt in &program.stmts {
+            self.collect_non_impl_declarations(stmt, Visibility::Private);
+        }
+
+        for stmt in &program.stmts {
+            self.collect_impl_declarations(stmt, Visibility::Private);
+        }
+    }
+
+    fn collect_non_impl_declarations(&mut self, stmt: &Stmt, visibility: Visibility) {
+        match stmt {
+            Stmt::Pub(pub_stmt) => {
+                self.collect_non_impl_declarations(pub_stmt.stmt.as_ref(), Visibility::Public)
+            }
+            Stmt::Fun(fun_stmt) => {
+                self.register_function_signature(fun_stmt);
+                self.function_visibility
+                    .insert(fun_stmt.name.clone(), visibility);
+            }
+            Stmt::Mod(mod_stmt) => self.register_module(mod_stmt, visibility),
+            Stmt::Import(import_stmt) => self.register_import(import_stmt, visibility),
+            Stmt::Use(use_stmt) => self.register_use(use_stmt, visibility),
+            Stmt::Struct(struct_stmt) => self.register_struct_def(struct_stmt, visibility),
+            Stmt::Enum(enum_stmt) => self.register_enum_def(enum_stmt, visibility),
+            Stmt::Class(class_stmt) => self.register_class_def(class_stmt, visibility),
+            Stmt::Impl(_) => {}
+            _ => {}
+        }
+    }
+
+    fn collect_impl_declarations(&mut self, stmt: &Stmt, visibility: Visibility) {
+        match stmt {
+            Stmt::Pub(pub_stmt) => {
+                self.collect_impl_declarations(pub_stmt.stmt.as_ref(), Visibility::Public)
+            }
+            Stmt::Impl(impl_stmt) => self.register_impl_methods(impl_stmt, visibility),
+            _ => {}
+        }
+    }
+
+    fn analyze_top_level_stmt(&mut self, stmt: &Stmt) {
+        match stmt {
+            Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                Stmt::Fun(_)
+                | Stmt::Var(_)
+                | Stmt::Const(_)
+                | Stmt::Struct(_)
+                | Stmt::Enum(_)
+                | Stmt::Class(_)
+                | Stmt::Mod(_)
+                | Stmt::Use(_)
+                | Stmt::Import(_)
+                | Stmt::Impl(_) => self.analyze_top_level_inner(pub_stmt.stmt.as_ref()),
+                other => self.error(format!(
+                    "Unsupported top-level pub declaration: {:?}",
+                    other
+                )),
+            },
+            _ => self.analyze_top_level_inner(stmt),
+        }
+    }
+
+    fn analyze_top_level_inner(&mut self, stmt: &Stmt) {
+        match stmt {
+            Stmt::Mod(_) | Stmt::Use(_) | Stmt::Import(_) => {}
+            Stmt::Struct(struct_stmt) => self.analyze_struct_stmt(struct_stmt),
+            Stmt::Enum(enum_stmt) => self.analyze_enum_stmt(enum_stmt),
+            Stmt::Impl(impl_stmt) => self.analyze_impl_stmt(impl_stmt),
+            _ => self.analyze_stmt(stmt),
         }
     }
 
@@ -94,11 +227,16 @@ impl SemanticAnalyzer {
                 }
                 self.pop_scope();
             }
-            Stmt::Pub(pub_stmt) => self.analyze_stmt(pub_stmt.stmt.as_ref()),
-            Stmt::Mod(_) => {}
-            Stmt::Use(_) => {}
+            Stmt::Pub(_) => {
+                self.error("'pub' is only allowed on top-level declarations and impl methods")
+            }
+            Stmt::Mod(_) => self.error("'mod' is only allowed at top level"),
+            Stmt::Use(_) => self.error("'use' is only allowed at top level"),
             Stmt::Var(var_stmt) => self.analyze_var_stmt(var_stmt),
             Stmt::Const(const_stmt) => {
+                if !matches!(const_stmt.const_type, Type::None) {
+                    self.validate_type_exists(&const_stmt.const_type, "const type");
+                }
                 let rhs_type = self.analyze_expr(&const_stmt.assignment);
                 let final_type = if matches!(const_stmt.const_type, Type::None) {
                     rhs_type
@@ -114,15 +252,9 @@ impl SemanticAnalyzer {
 
                 self.define_symbol(&const_stmt.name, final_type, false);
             }
-            Stmt::Struct(_) => {}
-            Stmt::Enum(_) => {}
-            Stmt::Impl(impl_stmt) => {
-                self.push_scope();
-                for method in &impl_stmt.methods {
-                    self.analyze_stmt(method);
-                }
-                self.pop_scope();
-            }
+            Stmt::Struct(_) => self.error("'struct' is only allowed at top level"),
+            Stmt::Enum(_) => self.error("'enum' is only allowed at top level"),
+            Stmt::Impl(_) => self.error("'impl' is only allowed at top level"),
             Stmt::If(if_stmt) => self.analyze_if_stmt(if_stmt),
             Stmt::Match(match_stmt) => self.analyze_match_stmt(match_stmt),
             Stmt::While(while_stmt) => self.analyze_while_stmt(while_stmt),
@@ -176,12 +308,276 @@ impl SemanticAnalyzer {
             Stmt::Expr(expr_stmt) => {
                 self.analyze_expr(&expr_stmt.expr);
             }
-            Stmt::Import(_) => {}
+            Stmt::Import(_) => self.error("'import' is only allowed at top level"),
             Stmt::Empty => {}
         }
     }
 
+    fn register_module(&mut self, mod_stmt: &ModStmt, visibility: Visibility) {
+        if self.modules.contains_key(&mod_stmt.name) {
+            self.error(format!("Duplicate module declaration '{}'", mod_stmt.name));
+            return;
+        }
+        self.modules.insert(mod_stmt.name.clone(), visibility);
+    }
+
+    fn register_import(&mut self, import_stmt: &ImportStmt, visibility: Visibility) {
+        if import_stmt.from.trim().is_empty() {
+            self.error(format!(
+                "Import '{}' has empty source path",
+                import_stmt.import
+            ));
+            return;
+        }
+
+        let binding_name = import_stmt
+            .alias
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| import_stmt.import.clone());
+
+        if self.binding_name_taken(&binding_name) {
+            self.error(format!(
+                "Duplicate module/import/use binding '{}'",
+                binding_name
+            ));
+            return;
+        }
+
+        self.imports
+            .insert(binding_name, ImportBinding { visibility });
+    }
+
+    fn register_use(&mut self, use_stmt: &UseStmt, visibility: Visibility) {
+        let mut parts = use_stmt.path.split("::");
+        let Some(root) = parts.next() else {
+            self.error("Use declaration path is empty");
+            return;
+        };
+        let binding_name = use_stmt
+            .path
+            .rsplit("::")
+            .next()
+            .unwrap_or(&use_stmt.path)
+            .to_string();
+
+        if self.binding_name_taken(&binding_name) {
+            self.error(format!(
+                "Duplicate module/import/use binding '{}'",
+                binding_name
+            ));
+            return;
+        }
+
+        self.uses.insert(
+            binding_name,
+            UseBinding {
+                visibility,
+                path: use_stmt.path.clone(),
+                root: root.to_string(),
+            },
+        );
+    }
+
+    fn register_struct_def(&mut self, struct_stmt: &StructStmt, visibility: Visibility) {
+        if self.type_defs.contains_key(&struct_stmt.name) {
+            self.error(format!("Duplicate type declaration '{}'", struct_stmt.name));
+            return;
+        }
+
+        let mut fields = HashMap::new();
+        for field in &struct_stmt.fields {
+            if fields.contains_key(&field.name) {
+                self.error(format!(
+                    "Duplicate field '{}' in struct '{}'",
+                    field.name, struct_stmt.name
+                ));
+                continue;
+            }
+            fields.insert(field.name.clone(), field.field_type.clone());
+        }
+
+        self.type_defs.insert(
+            struct_stmt.name.clone(),
+            TypeDef::Struct(StructDef { visibility, fields }),
+        );
+    }
+
+    fn register_enum_def(&mut self, enum_stmt: &EnumStmt, visibility: Visibility) {
+        if self.type_defs.contains_key(&enum_stmt.name) {
+            self.error(format!("Duplicate type declaration '{}'", enum_stmt.name));
+            return;
+        }
+
+        let mut variants = HashMap::new();
+        for variant in &enum_stmt.variants {
+            if variants.contains_key(&variant.name) {
+                self.error(format!(
+                    "Duplicate variant '{}' in enum '{}'",
+                    variant.name, enum_stmt.name
+                ));
+                continue;
+            }
+            variants.insert(variant.name.clone(), variant.arguments.clone());
+        }
+
+        self.type_defs.insert(
+            enum_stmt.name.clone(),
+            TypeDef::Enum(EnumDef {
+                visibility,
+                variants,
+            }),
+        );
+    }
+
+    fn register_class_def(&mut self, class_stmt: &ClassStmt, visibility: Visibility) {
+        if self.type_defs.contains_key(&class_stmt.name) {
+            self.error(format!("Duplicate type declaration '{}'", class_stmt.name));
+            return;
+        }
+
+        self.type_defs.insert(
+            class_stmt.name.clone(),
+            TypeDef::Class(ClassDef { visibility }),
+        );
+    }
+
+    fn register_impl_methods(
+        &mut self,
+        impl_stmt: &crate::ast::ImplStmt,
+        impl_visibility: Visibility,
+    ) {
+        let Some(type_visibility) = self.type_visibility(&impl_stmt.name) else {
+            self.error(format!(
+                "Impl target type '{}' is not declared",
+                impl_stmt.name
+            ));
+            return;
+        };
+
+        if impl_visibility == Visibility::Public && type_visibility == Visibility::Private {
+            self.error(format!(
+                "Cannot declare public impl for private type '{}'",
+                impl_stmt.name
+            ));
+        }
+
+        for method in &impl_stmt.methods {
+            match method {
+                Stmt::Fun(fun_stmt) => {
+                    let duplicate = self
+                        .impl_methods
+                        .entry(impl_stmt.name.clone())
+                        .or_default()
+                        .insert(fun_stmt.name.clone(), Visibility::Private)
+                        .is_some();
+                    if duplicate {
+                        self.error(format!(
+                            "Duplicate method '{}' in impl '{}'",
+                            fun_stmt.name, impl_stmt.name
+                        ));
+                    }
+                }
+                Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                    Stmt::Fun(fun_stmt) => {
+                        if type_visibility == Visibility::Private {
+                            self.error(format!(
+                                "Cannot expose public method '{}' on private type '{}'",
+                                fun_stmt.name, impl_stmt.name
+                            ));
+                        }
+                        let duplicate = self
+                            .impl_methods
+                            .entry(impl_stmt.name.clone())
+                            .or_default()
+                            .insert(fun_stmt.name.clone(), Visibility::Public)
+                            .is_some();
+                        if duplicate {
+                            self.error(format!(
+                                "Duplicate method '{}' in impl '{}'",
+                                fun_stmt.name, impl_stmt.name
+                            ));
+                        }
+                    }
+                    _ => self.error("Impl blocks can contain only functions or pub functions"),
+                },
+                _ => self.error("Impl blocks can contain only functions or pub functions"),
+            }
+        }
+    }
+
+    fn validate_use_bindings(&mut self) {
+        let uses = self.uses.clone();
+        for binding in uses.values() {
+            let Some(root_visibility) = self.resolve_root_visibility(&binding.root) else {
+                self.error(format!(
+                    "Unresolved use path root '{}' in '{}'",
+                    binding.root, binding.path
+                ));
+                continue;
+            };
+
+            if binding.visibility == Visibility::Public && root_visibility == Visibility::Private {
+                self.error(format!(
+                    "Cannot publicly re-export private root '{}'",
+                    binding.root
+                ));
+            }
+        }
+    }
+
+    fn resolve_root_visibility(&self, root: &str) -> Option<Visibility> {
+        if matches!(root, "std" | "core" | "crate" | "self" | "super") {
+            return Some(Visibility::Public);
+        }
+
+        self.modules
+            .get(root)
+            .copied()
+            .or_else(|| self.imports.get(root).map(|binding| binding.visibility))
+            .or_else(|| self.uses.get(root).map(|binding| binding.visibility))
+    }
+
+    fn binding_name_taken(&self, name: &str) -> bool {
+        self.modules.contains_key(name)
+            || self.imports.contains_key(name)
+            || self.uses.contains_key(name)
+            || self.type_defs.contains_key(name)
+            || self.functions.contains_key(name)
+    }
+
+    fn type_visibility(&self, type_name: &str) -> Option<Visibility> {
+        self.type_defs.get(type_name).map(|def| match def {
+            TypeDef::Struct(def) => def.visibility,
+            TypeDef::Enum(def) => def.visibility,
+            TypeDef::Class(def) => def.visibility,
+        })
+    }
+
+    fn validate_type_exists(&mut self, ty: &Type, context: &str) {
+        if !self.is_known_type(ty) {
+            self.error(format!("Unknown type in {}: {:?}", context, ty));
+        }
+    }
+
+    fn is_known_type(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Num | Type::Char | Type::Byte | Type::String | Type::Bool | Type::Void => true,
+            Type::Array(inner) => self.is_known_type(inner),
+            Type::Identifier(name) => {
+                self.type_defs.contains_key(name)
+                    || self.imports.contains_key(name)
+                    || self.uses.contains_key(name)
+            }
+            Type::None => true,
+        }
+    }
+
     fn analyze_var_stmt(&mut self, var_stmt: &VarStmt) {
+        if !matches!(var_stmt.var_type, Type::None) {
+            self.validate_type_exists(&var_stmt.var_type, "variable type");
+        }
+
         let rhs_type = if matches!(var_stmt.assignment, Expr::Empty) {
             Type::None
         } else {
@@ -261,10 +657,20 @@ impl SemanticAnalyzer {
     }
 
     fn analyze_fun_stmt(&mut self, fun_stmt: &FunStmt) {
+        if !matches!(fun_stmt.return_type, Type::None) {
+            self.validate_type_exists(&fun_stmt.return_type, "function return type");
+        }
+        for param in &fun_stmt.params {
+            self.validate_type_exists(&param.param_type, "function parameter type");
+        }
+
         let previous_return = self.current_return_type.clone();
         self.current_return_type = Some(fun_stmt.return_type.clone());
 
         self.push_scope();
+        if let Some(impl_type) = &self.current_impl_type {
+            self.define_symbol("this", Type::Identifier(impl_type.clone()), false);
+        }
         for param in &fun_stmt.params {
             self.define_symbol(&param.name, param.param_type.clone(), true);
         }
@@ -275,27 +681,219 @@ impl SemanticAnalyzer {
         self.current_return_type = previous_return;
     }
 
-    fn analyze_match_stmt(&mut self, match_stmt: &MatchStmt) {
-        self.analyze_expr(&match_stmt.expr);
-
-        for arm in &match_stmt.arms {
-            self.push_scope();
-            self.bind_pattern(&arm.pattern);
-            self.analyze_stmt(arm.body.as_ref());
-            self.pop_scope();
+    fn analyze_struct_stmt(&mut self, struct_stmt: &StructStmt) {
+        if let Some(TypeDef::Struct(def)) = self.type_defs.get(&struct_stmt.name).cloned() {
+            for (field_name, field_ty) in &def.fields {
+                self.validate_type_exists(
+                    field_ty,
+                    &format!("field '{}.{}' type", struct_stmt.name, field_name),
+                );
+            }
         }
     }
 
-    fn bind_pattern(&mut self, pattern: &Pattern) {
-        match pattern {
-            Pattern::Wildcard => {}
-            Pattern::Literal(_) => {}
-            Pattern::Identifier(name) => {
-                self.define_symbol(name, Type::None, true);
+    fn analyze_enum_stmt(&mut self, enum_stmt: &EnumStmt) {
+        if let Some(TypeDef::Enum(def)) = self.type_defs.get(&enum_stmt.name).cloned() {
+            for (variant_name, args) in &def.variants {
+                for arg_ty in args {
+                    self.validate_type_exists(
+                        arg_ty,
+                        &format!(
+                            "variant '{}.{}' argument type",
+                            enum_stmt.name, variant_name
+                        ),
+                    );
+                }
             }
-            Pattern::Variant(_, nested) => {
-                for pattern in nested {
-                    self.bind_pattern(pattern);
+        }
+    }
+
+    fn analyze_impl_stmt(&mut self, impl_stmt: &crate::ast::ImplStmt) {
+        let Some(type_visibility) = self.type_visibility(&impl_stmt.name) else {
+            self.error(format!(
+                "Impl target type '{}' is not declared",
+                impl_stmt.name
+            ));
+            return;
+        };
+
+        for method in &impl_stmt.methods {
+            match method {
+                Stmt::Fun(fun_stmt) => {
+                    let previous_impl = self.current_impl_type.clone();
+                    self.current_impl_type = Some(impl_stmt.name.clone());
+                    self.analyze_fun_stmt(fun_stmt);
+                    self.current_impl_type = previous_impl;
+                }
+                Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                    Stmt::Fun(fun_stmt) => {
+                        if type_visibility == Visibility::Private {
+                            self.error(format!(
+                                "Cannot expose public method '{}' on private type '{}'",
+                                fun_stmt.name, impl_stmt.name
+                            ));
+                        }
+                        let previous_impl = self.current_impl_type.clone();
+                        self.current_impl_type = Some(impl_stmt.name.clone());
+                        self.analyze_fun_stmt(fun_stmt);
+                        self.current_impl_type = previous_impl;
+                    }
+                    _ => self.error("Impl blocks can contain only functions or pub functions"),
+                },
+                _ => self.error("Impl blocks can contain only functions or pub functions"),
+            }
+        }
+    }
+
+    fn analyze_match_stmt(&mut self, match_stmt: &MatchStmt) {
+        let scrutinee_type = self.analyze_expr(&match_stmt.expr);
+        let enum_variants = match &scrutinee_type {
+            Type::Identifier(name) => match self.type_defs.get(name) {
+                Some(TypeDef::Enum(enum_def)) => Some(enum_def.variants.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+
+        let mut has_catch_all = false;
+        let mut seen_enum_variants = HashSet::new();
+        let mut seen_bool_literals = HashSet::new();
+        for arm in &match_stmt.arms {
+            self.push_scope();
+            self.bind_pattern(
+                &arm.pattern,
+                &scrutinee_type,
+                enum_variants.as_ref(),
+                true,
+                &mut has_catch_all,
+                &mut seen_enum_variants,
+                &mut seen_bool_literals,
+            );
+            self.analyze_stmt(arm.body.as_ref());
+            self.pop_scope();
+        }
+
+        if has_catch_all {
+            return;
+        }
+
+        match &scrutinee_type {
+            Type::Bool => {
+                if !seen_bool_literals.contains(&true) || !seen_bool_literals.contains(&false) {
+                    self.error("Non-exhaustive match for Bool: expected true and false arms");
+                }
+            }
+            Type::Identifier(enum_name) => {
+                if let Some(variants) = enum_variants {
+                    let missing = variants
+                        .keys()
+                        .filter(|variant| !seen_enum_variants.contains(*variant))
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    if !missing.is_empty() {
+                        self.error(format!(
+                            "Non-exhaustive match for enum '{}': missing {}",
+                            enum_name,
+                            missing.join(", ")
+                        ));
+                    }
+                } else {
+                    self.error(format!(
+                        "Non-exhaustive match for type {:?}: add '_' arm",
+                        scrutinee_type
+                    ));
+                }
+            }
+            _ => {
+                self.error(format!(
+                    "Non-exhaustive match for type {:?}: add '_' arm",
+                    scrutinee_type
+                ));
+            }
+        }
+    }
+
+    fn bind_pattern(
+        &mut self,
+        pattern: &Pattern,
+        expected_type: &Type,
+        enum_variants: Option<&HashMap<String, Vec<Type>>>,
+        is_top_level_arm_pattern: bool,
+        has_catch_all: &mut bool,
+        seen_enum_variants: &mut HashSet<String>,
+        seen_bool_literals: &mut HashSet<bool>,
+    ) {
+        match pattern {
+            Pattern::Wildcard => {
+                if is_top_level_arm_pattern {
+                    *has_catch_all = true;
+                }
+            }
+            Pattern::Literal(literal) => {
+                let literal_ty = match literal {
+                    Literal::String(_) => Type::String,
+                    Literal::Char(_) => Type::Char,
+                    Literal::Num(_) => Type::Num,
+                    Literal::Bool(v) => {
+                        seen_bool_literals.insert(*v);
+                        Type::Bool
+                    }
+                    Literal::Identifier(_) => Type::None,
+                    Literal::This => Type::Identifier("This".to_string()),
+                };
+
+                if !is_assignable(expected_type, &literal_ty)
+                    && !is_assignable(&literal_ty, expected_type)
+                {
+                    self.error(format!(
+                        "Match pattern type mismatch: expected {:?}, got {:?}",
+                        expected_type, literal_ty
+                    ));
+                }
+            }
+            Pattern::Identifier(name) => {
+                if is_top_level_arm_pattern {
+                    *has_catch_all = true;
+                }
+                self.define_symbol(name, expected_type.clone(), true);
+            }
+            Pattern::Variant(variant_name, nested) => {
+                let Some(variants) = enum_variants else {
+                    self.error(format!(
+                        "Variant pattern '{}' used for non-enum type {:?}",
+                        variant_name, expected_type
+                    ));
+                    return;
+                };
+
+                let Some(arg_types) = variants.get(variant_name) else {
+                    self.error(format!("Unknown enum variant '{}'", variant_name));
+                    return;
+                };
+
+                seen_enum_variants.insert(variant_name.clone());
+
+                if arg_types.len() != nested.len() {
+                    self.error(format!(
+                        "Variant '{}' expects {} patterns, got {}",
+                        variant_name,
+                        arg_types.len(),
+                        nested.len()
+                    ));
+                    return;
+                }
+
+                for (nested_pattern, expected_ty) in nested.iter().zip(arg_types.iter()) {
+                    self.bind_pattern(
+                        nested_pattern,
+                        expected_ty,
+                        None,
+                        false,
+                        has_catch_all,
+                        seen_enum_variants,
+                        seen_bool_literals,
+                    );
                 }
             }
         }
@@ -338,7 +936,14 @@ impl SemanticAnalyzer {
                         Type::None
                     }
                 },
-                Literal::This => Type::Identifier("This".to_string()),
+                Literal::This => {
+                    if let Some(impl_type) = &self.current_impl_type {
+                        Type::Identifier(impl_type.clone())
+                    } else {
+                        self.error("'this' used outside of impl method");
+                        Type::None
+                    }
+                }
             },
             Expr::Assignment(left, right) => {
                 let right_ty = self.analyze_expr(right);
@@ -363,7 +968,13 @@ impl SemanticAnalyzer {
                         }
                     }
                     Expr::Mebmer(member) => {
-                        self.analyze_expr(member.member.as_ref());
+                        let left_ty = self.analyze_expr(left.as_ref());
+                        if !matches!(left_ty, Type::None) && !is_assignable(&left_ty, &right_ty) {
+                            self.error(format!(
+                                "Assignment type mismatch for member '{}': expected {:?}, got {:?}",
+                                member.property, left_ty, right_ty
+                            ));
+                        }
                     }
                     Expr::ComputedExpr(computed) => {
                         self.analyze_expr(computed.member.as_ref());
@@ -410,8 +1021,42 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::Mebmer(member) => {
-                self.analyze_expr(member.member.as_ref());
-                Type::None
+                let owner_ty = self.analyze_expr(member.member.as_ref());
+                match owner_ty {
+                    Type::Identifier(type_name) => match self.type_defs.get(&type_name) {
+                        Some(TypeDef::Struct(def)) => {
+                            if let Some(field_ty) = def.fields.get(&member.property) {
+                                field_ty.clone()
+                            } else {
+                                self.error(format!(
+                                    "Unknown field '{}.{}'",
+                                    type_name, member.property
+                                ));
+                                Type::None
+                            }
+                        }
+                        Some(TypeDef::Class(_)) => Type::None,
+                        Some(TypeDef::Enum(_)) => {
+                            self.error(format!(
+                                "Enum '{}' has no field '{}'",
+                                type_name, member.property
+                            ));
+                            Type::None
+                        }
+                        None => {
+                            self.error(format!("Member access on unknown type '{}'", type_name));
+                            Type::None
+                        }
+                    },
+                    Type::None => Type::None,
+                    other => {
+                        self.error(format!(
+                            "Type {:?} has no member '{}'",
+                            other, member.property
+                        ));
+                        Type::None
+                    }
+                }
             }
             Expr::ComputedExpr(computed) => {
                 self.analyze_expr(computed.member.as_ref());
