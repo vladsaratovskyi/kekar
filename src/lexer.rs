@@ -19,23 +19,36 @@ pub enum Token {
     Percent,
     PlusEqual,
     MinusEqual,
+    StarEqual,
+    SlashEqual,
+    PercentEqual,
     Colon,
+    ColonColon,
     LeftBrace,
     RightBrace,
+    Question,
 
     // One or two character tokens.
+    Arrow,
+    FatArrow,
     Not,
     NotEqual,
     Equal,
     EqualEqual,
     Greater,
     GreaterEqual,
+    ShiftRight,
     Less,
     LessEqual,
+    ShiftLeft,
+    BitAnd,
+    BitOr,
+    BitXor,
 
     // Literals.
     Identifier(String),
     String(String),
+    Char(char),
     Number(f64),
 
     // Keywords.
@@ -58,6 +71,17 @@ pub enum Token {
     While,
     Import,
     From,
+    As,
+    Break,
+    Continue,
+    Struct,
+    Enum,
+    Impl,
+    Match,
+    Mod,
+    Use,
+    Pub,
+    Const,
 
     Eof,
 }
@@ -93,6 +117,17 @@ fn get_keyword(key: &str) -> Option<Token> {
         "lt" => Some(Token::Less),
         "import" => Some(Token::Import),
         "from" => Some(Token::From),
+        "as" => Some(Token::As),
+        "break" => Some(Token::Break),
+        "continue" => Some(Token::Continue),
+        "struct" => Some(Token::Struct),
+        "enum" => Some(Token::Enum),
+        "impl" => Some(Token::Impl),
+        "match" => Some(Token::Match),
+        "mod" => Some(Token::Mod),
+        "use" => Some(Token::Use),
+        "pub" => Some(Token::Pub),
+        "const" => Some(Token::Const),
         s => Some(Token::Identifier(s.to_string())),
     }
 }
@@ -105,6 +140,11 @@ fn is_num(char: char) -> bool {
 fn is_letter(char: char) -> bool {
     let nums = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_";
     nums.contains(char)
+}
+
+fn is_hex_digit(char: char) -> bool {
+    let hex = "0123456789abcdefABCDEF";
+    hex.contains(char)
 }
 
 pub struct Lexer {
@@ -153,7 +193,7 @@ impl Lexer {
     }
 
     fn peek_next_char(&mut self) -> char {
-        if self.is_end() {
+        if self.current + 1 >= self.source.len() {
             return '\0';
         }
         self.source.as_bytes()[self.current + 1] as char
@@ -198,6 +238,25 @@ impl Lexer {
     }
 
     fn parse_number(&mut self) -> Option<Token> {
+        if self.source.as_bytes()[self.start] as char == '0'
+            && matches!(self.peek_char(), 'x' | 'X')
+        {
+            self.move_next();
+
+            let hex_start = self.current;
+            while is_hex_digit(self.peek_char()) {
+                self.move_next();
+            }
+
+            if self.current == hex_start {
+                panic!("Expected hex digits at {}", self.current);
+            }
+
+            let value = i64::from_str_radix(&self.source[self.start + 2..self.current], 16)
+                .expect("Invalid hex literal") as f64;
+            return Some(Token::Number(value));
+        }
+
         while is_num(self.peek_char()) {
             self.move_next();
             continue;
@@ -224,6 +283,52 @@ impl Lexer {
         get_keyword(&value)
     }
 
+    fn parse_char_literal(&mut self) -> Option<Token> {
+        if self.is_end() {
+            panic!("Unclosed Char at {}!", self.current);
+        }
+
+        let value = if self.peek_char() == '\\' {
+            self.move_next();
+            let escaped = self.move_next();
+            match escaped {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                '\\' => '\\',
+                '\'' => '\'',
+                '"' => '"',
+                c => c,
+            }
+        } else {
+            self.move_next()
+        };
+
+        if self.peek_char() != '\'' {
+            panic!("Unclosed Char at {}!", self.current);
+        }
+        self.move_next();
+
+        Some(Token::Char(value))
+    }
+
+    fn parse_block_comment(&mut self) {
+        while !self.is_end() {
+            if self.peek_char() == '*' && self.peek_next_char() == '/' {
+                self.move_next();
+                self.move_next();
+                return;
+            }
+
+            if self.peek_char() == '\n' {
+                self.line += 1;
+            }
+            self.move_next();
+        }
+
+        panic!("Unclosed block comment at {}", self.current);
+    }
+
     fn scan_token(&mut self) -> Option<Token> {
         let char = self.move_next();
         match char {
@@ -236,69 +341,110 @@ impl Lexer {
             ',' => Some(Token::Coma),
             '.' => Some(Token::Dot),
             '-' => {
-                let second = self.check_second_char('=');
-                if second {
+                if self.check_second_char('=') {
                     Some(Token::MinusEqual)
+                } else if self.check_second_char('>') {
+                    Some(Token::Arrow)
                 } else {
                     Some(Token::Minus)
                 }
             }
             '+' => {
-                let second = self.check_second_char('=');
-                if second {
+                if self.check_second_char('=') {
                     Some(Token::PlusEqual)
                 } else {
                     Some(Token::Plus)
                 }
             }
             ';' => Some(Token::Semicolon),
-            ':' => Some(Token::Colon),
-            '*' => Some(Token::Star),
-            '%' => Some(Token::Percent),
+            ':' => {
+                if self.check_second_char(':') {
+                    Some(Token::ColonColon)
+                } else {
+                    Some(Token::Colon)
+                }
+            }
+            '*' => {
+                if self.check_second_char('=') {
+                    Some(Token::StarEqual)
+                } else {
+                    Some(Token::Star)
+                }
+            }
+            '%' => {
+                if self.check_second_char('=') {
+                    Some(Token::PercentEqual)
+                } else {
+                    Some(Token::Percent)
+                }
+            }
             '!' => {
-                let second = self.check_second_char('=');
-                if second {
+                if self.check_second_char('=') {
                     Some(Token::NotEqual)
                 } else {
                     Some(Token::Not)
                 }
             }
             '=' => {
-                let second = self.check_second_char('=');
-                if second {
+                if self.check_second_char('=') {
                     Some(Token::EqualEqual)
+                } else if self.check_second_char('>') {
+                    Some(Token::FatArrow)
                 } else {
                     Some(Token::Equal)
                 }
             }
             '>' => {
-                let res = self.check_second_char('=');
-                if res {
+                if self.check_second_char('=') {
                     Some(Token::GreaterEqual)
+                } else if self.check_second_char('>') {
+                    Some(Token::ShiftRight)
                 } else {
                     Some(Token::Greater)
                 }
             }
             '<' => {
-                let res = self.check_second_char('=');
-                if res {
+                if self.check_second_char('=') {
                     Some(Token::LessEqual)
+                } else if self.check_second_char('<') {
+                    Some(Token::ShiftLeft)
                 } else {
                     Some(Token::Less)
                 }
             }
+            '&' => {
+                if self.check_second_char('&') {
+                    Some(Token::And)
+                } else {
+                    Some(Token::BitAnd)
+                }
+            }
+            '|' => {
+                if self.check_second_char('|') {
+                    Some(Token::Or)
+                } else {
+                    Some(Token::BitOr)
+                }
+            }
+            '^' => Some(Token::BitXor),
+            '?' => Some(Token::Question),
             '/' => {
-                let res = self.check_second_char('/');
-                if res {
+                if self.check_second_char('/') {
                     while self.peek_char() != '\n' && !self.is_end() {
                         self.move_next();
                     }
                     None
+                } else if self.check_second_char('*') {
+                    self.parse_block_comment();
+                    None
+                } else if self.check_second_char('=') {
+                    Some(Token::SlashEqual)
                 } else {
                     Some(Token::Slash)
                 }
             }
             '"' => self.parse_string(),
+            '\'' => self.parse_char_literal(),
             '\n' => {
                 self.line += 1;
                 None
