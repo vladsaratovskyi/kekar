@@ -577,3 +577,72 @@ pub fun add(a: Num, b: Num) -> Num {
 
     fs::remove_dir_all(root).expect("should clean test workspace");
 }
+
+#[test]
+fn workspace_resolves_bundled_stdlib_use_paths_and_calls() {
+    let root = temp_workspace("stdlib-use-ok");
+    let entry = root.join("main.kek");
+
+    write_file(
+        &entry,
+        r#"
+use std::fs::read_to_string;
+use std::string::len;
+use std::collections::count;
+use std::io::write_line;
+use std::path::Path;
+
+fun main() -> Num {
+    var text: String = read_to_string("input.kek");
+    var p: Path;
+    write_line(text);
+    return len(text) + count([1, 2, 3]);
+}
+"#,
+    );
+
+    let result = analyze_workspace(&entry);
+    assert!(result.is_ok(), "Expected no workspace errors: {result:?}");
+
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}
+
+#[test]
+fn workspace_rejects_missing_stdlib_symbol_in_use_path() {
+    let root = temp_workspace("stdlib-use-missing");
+    let entry = root.join("main.kek");
+
+    write_file(
+        &entry,
+        r#"
+use std::fs::missing;
+
+fun main() -> Num {
+    return 0;
+}
+"#,
+    );
+
+    assert_has_error(&entry, "Unresolved use path segment 'missing'");
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}
+
+#[test]
+fn workspace_enforces_stdlib_function_argument_types() {
+    let root = temp_workspace("stdlib-fn-arg-type");
+    let entry = root.join("main.kek");
+
+    write_file(
+        &entry,
+        r#"
+use std::string::len;
+
+fun main() -> Num {
+    return len(1);
+}
+"#,
+    );
+
+    assert_has_error(&entry, "Argument 0 for function 'len' expected String, got Num");
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}

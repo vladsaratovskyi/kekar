@@ -1,0 +1,7 @@
+pub struct Path {
+    raw: String;
+}
+
+pub fun join(base: String, part: String) -> String {
+    return base;
+}

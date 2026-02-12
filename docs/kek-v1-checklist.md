@@ -1,7 +1,7 @@
 # Kek v1 Implementation Checklist
 
 Status date: `2026-02-12`  
-Last updated for commit: `ff76448` + readiness reevaluation
+Last updated for commit: `aed5b8d` + stage 9 planning
 
 ## Stage 1: Freeze grammar + compatibility rules
 - [x] Freeze v1 grammar and compatibility contract in `/Users/vlad/workspace/rusty/kekar/docs/kek-v1.md`
@@ -74,3 +74,15 @@ Last updated for commit: `ff76448` + readiness reevaluation
 - [x] Implement semantic/runtime representation for generic types beyond parse-only consumption
 - [x] Add backend e2e coverage for multi-file cross-module execution (assemble/link/run path)
 - [ ] Run backend e2e in a supported CI/runtime target (linux x86_64) instead of skip-only on unsupported hosts
+
+## Stage 9: Self-host closure
+- [ ] Add linux x86_64 CI job with `nasm` + `ld` and require backend e2e execution (no skip path on the CI target)
+- [x] Introduce filesystem-backed standard library root (`core`/`std`) and remove special-case unresolved acceptance for those roots
+- [x] Define and implement minimal bootstrap stdlib modules required by compiler code (`std::fs`, `std::path`, `std::io`, `std::string`, `std::collections`)
+- [x] Enforce concrete symbol/type resolution for `std`/`core` paths in workspace type/function resolution (fail on missing symbols)
+- [x] Add end-to-end workspace tests for stdlib imports and cross-module visibility over stdlib APIs
+- [ ] Document bootstrap ABI + stdlib contract for self-host compiler implementation (runtime, memory model, required APIs)
+- [ ] Build and check in a Kek compiler stage-0 source tree that compiles under current compiler pipeline
+- [ ] Add bootstrap pipeline test: compile stage-0 Kek compiler sources to ASM and ensure no semantic/parse diagnostics
+- [ ] Add self-application milestone test: use generated stage-0 compiler artifact to compile a representative Kek program
+- [ ] Add determinism gate: repeated self-host compile of the same input yields stable ASM (or documented canonicalization rules)

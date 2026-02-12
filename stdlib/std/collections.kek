@@ -1,0 +1,3 @@
+pub fun count(values: Num[]) -> Num {
+    return 0;
+}

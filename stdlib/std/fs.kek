@@ -1,0 +1,7 @@
+pub fun read_to_string(path: String) -> String {
+    return "";
+}
+
+pub fun write(path: String, contents: String) -> Bool {
+    return true;
+}

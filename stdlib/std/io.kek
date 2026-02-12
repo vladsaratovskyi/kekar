@@ -1,0 +1,7 @@
+pub fun write_line(text: String) -> Void {
+    return;
+}
+
+pub fun write_err(text: String) -> Void {
+    return;
+}

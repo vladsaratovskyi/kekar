@@ -1,0 +1,7 @@
+pub fun len(text: String) -> Num {
+    return 0;
+}
+
+pub fun concat(left: String, right: String) -> String {
+    return left;
+}

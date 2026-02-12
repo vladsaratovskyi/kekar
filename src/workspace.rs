@@ -694,14 +694,47 @@ struct WorkspaceLinker {
     modules: HashMap<PathBuf, LinkedModule>,
     loading: HashSet<PathBuf>,
     errors: Vec<SemanticError>,
+    builtin_root_modules: HashMap<String, PathBuf>,
 }
 
 impl WorkspaceLinker {
     fn new() -> Self {
-        Self {
+        let mut linker = Self {
             modules: HashMap::new(),
             loading: HashSet::new(),
             errors: Vec::new(),
+            builtin_root_modules: HashMap::new(),
+        };
+        linker.seed_bundled_stdlib_modules();
+        linker
+    }
+
+    fn seed_bundled_stdlib_modules(&mut self) {
+        let stdlib_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("stdlib");
+        for (name, path) in [
+            ("std", stdlib_root.join("std").join("mod.kek")),
+            ("core", stdlib_root.join("core").join("mod.kek")),
+        ] {
+            if !path.is_file() {
+                continue;
+            }
+            if let Some(module_path) = self.load_module(&path) {
+                self.builtin_root_modules
+                    .insert(name.to_string(), module_path);
+            }
+        }
+    }
+
+    fn inject_builtin_root_items(
+        module: &mut LinkedModule,
+        builtin_root_modules: &HashMap<String, PathBuf>,
+    ) {
+        for (root_name, module_path) in builtin_root_modules {
+            module.items.entry(root_name.clone()).or_insert(ItemInfo {
+                kind: ItemKind::Module,
+                public: true,
+                target_module: Some(module_path.clone()),
+            });
         }
     }
 
@@ -783,10 +816,12 @@ impl WorkspaceLinker {
                 });
         }
 
+        let builtin_root_modules = self.builtin_root_modules.clone();
         if let Some(module) = self.modules.get_mut(&canonical) {
             module.bindings = bindings;
             module.items = collect_module_items(&module.ast, &module.bindings);
             module.uses = collect_use_paths(&module.ast);
+            Self::inject_builtin_root_items(module, &builtin_root_modules);
         }
 
         for child in mod_children {
@@ -973,10 +1008,6 @@ fn resolve_use_path(
     }
 
     let root = segments[0];
-
-    if matches!(root, "std" | "core") {
-        return Ok(());
-    }
 
     let mut current_module_path;
     let mut segment_index = 1usize;
@@ -2053,9 +2084,6 @@ fn resolve_type_path(
     }
 
     let root = segments[0];
-    if matches!(root, "std" | "core") {
-        return None;
-    }
 
     let mut current_module_path;
     let mut segment_index = 1usize;
@@ -2131,9 +2159,6 @@ fn resolve_function_path(
     }
 
     let root = segments[0];
-    if matches!(root, "std" | "core") {
-        return None;
-    }
 
     let mut current_module_path;
     let mut segment_index = 1usize;
@@ -2375,6 +2400,7 @@ mod tests {
         is_function_callable_from_module, resolve_function_path, resolve_type_path,
         type_to_value_type, use_binding_name, value_type_assignable, FunctionInfo, FunctionKey,
         ItemInfo, ItemKind, LinkedModule, MethodInfo, ModuleBinding, TypeInfo, TypeKey, ValueType,
+        WorkspaceLinker,
     };
 
     fn empty_module(path: &str) -> LinkedModule {
@@ -2386,6 +2412,38 @@ mod tests {
             items: HashMap::new(),
             uses: vec![],
         }
+    }
+
+    #[test]
+    fn workspace_linker_seeds_bundled_stdlib_root_modules() {
+        let linker = WorkspaceLinker::new();
+
+        let std_root = linker
+            .builtin_root_modules
+            .get("std")
+            .expect("std root should be seeded")
+            .clone();
+        let core_root = linker
+            .builtin_root_modules
+            .get("core")
+            .expect("core root should be seeded")
+            .clone();
+
+        let std_module = linker
+            .modules
+            .get(&std_root)
+            .expect("std module should be loaded");
+        let core_module = linker
+            .modules
+            .get(&core_root)
+            .expect("core module should be loaded");
+
+        assert!(std_module.items.contains_key("fs"));
+        assert!(std_module.items.contains_key("path"));
+        assert!(std_module.items.contains_key("io"));
+        assert!(std_module.items.contains_key("string"));
+        assert!(std_module.items.contains_key("collections"));
+        assert!(core_module.items.contains_key("fmt"));
     }
 
     #[test]
