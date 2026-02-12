@@ -236,6 +236,38 @@ fun main() -> Num {
 }
 
 #[test]
+fn backend_e2e_short_circuits_logical_and_or_rhs() {
+    if let Err(reason) = ensure_backend_e2e_runtime() {
+        eprintln!("skipping backend e2e test: {reason}");
+        return;
+    }
+
+    let code = compile_asm_and_run(
+        r#"
+fun crash() -> Num {
+    return 1 / 0;
+}
+
+fun main() -> Num {
+    var a: Bool = false && (crash() > 0);
+    var b: Bool = true || (crash() > 0);
+    if a {
+        return 1;
+    }
+    if b {
+        return 0;
+    }
+    return 2;
+}
+"#,
+        "short-circuit-and-or",
+    )
+    .expect("assemble/link/run should succeed");
+
+    assert_eq!(code, 0);
+}
+
+#[test]
 fn backend_e2e_runs_cross_module_import_function_call() {
     if let Err(reason) = ensure_backend_e2e_runtime() {
         eprintln!("skipping backend e2e test: {reason}");

@@ -69,7 +69,7 @@ Last updated for commit: `ff76448` + readiness reevaluation
 ## Stage 8: Reopened blockers after self-host readiness reevaluation
 - [x] Emit workspace-linked ASM across all loaded modules (not only entry-file AST)
 - [x] Lower module-qualified calls (`Module.fun(...)`) to executable call targets in ASM backend
-- [ ] Enforce spec-required short-circuit semantics for `&&` and `||` in ASM lowering
+- [x] Enforce spec-required short-circuit semantics for `&&` and `||` in ASM lowering
 - [ ] Replace remaining parser-internal panic paths with structured parser errors (no panic/catch control flow)
 - [ ] Implement semantic/runtime representation for generic types beyond parse-only consumption
 - [x] Add backend e2e coverage for multi-file cross-module execution (assemble/link/run path)

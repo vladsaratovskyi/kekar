@@ -1019,6 +1019,16 @@ impl AsmGenerator {
                 }
             }
             Expr::Binary(left, op, right) => {
+                if *op == Token::And {
+                    self.emit_short_circuit_and(left, right, ctx, lines);
+                    return;
+                }
+
+                if *op == Token::Or {
+                    self.emit_short_circuit_or(left, right, ctx, lines);
+                    return;
+                }
+
                 self.emit_expr(left, ctx, lines);
                 lines.push("    push rax".to_string());
                 self.emit_expr(right, ctx, lines);
@@ -1044,24 +1054,6 @@ impl AsmGenerator {
                     Token::GreaterEqual => self.emit_setcc("setge", lines),
                     Token::Less => self.emit_setcc("setl", lines),
                     Token::LessEqual => self.emit_setcc("setle", lines),
-                    Token::And => {
-                        lines.push("    cmp rax, 0".to_string());
-                        lines.push("    setne al".to_string());
-                        lines.push("    movzx rax, al".to_string());
-                        lines.push("    cmp rbx, 0".to_string());
-                        lines.push("    setne bl".to_string());
-                        lines.push("    movzx rbx, bl".to_string());
-                        lines.push("    and rax, rbx".to_string());
-                    }
-                    Token::Or => {
-                        lines.push("    cmp rax, 0".to_string());
-                        lines.push("    setne al".to_string());
-                        lines.push("    movzx rax, al".to_string());
-                        lines.push("    cmp rbx, 0".to_string());
-                        lines.push("    setne bl".to_string());
-                        lines.push("    movzx rbx, bl".to_string());
-                        lines.push("    or rax, rbx".to_string());
-                    }
                     _ => lines.push("    ; unsupported binary operator".to_string()),
                 }
             }
@@ -1200,6 +1192,56 @@ impl AsmGenerator {
             }
             Expr::Empty => lines.push("    mov rax, 0".to_string()),
         }
+    }
+
+    fn emit_short_circuit_and(
+        &mut self,
+        left: &Expr,
+        right: &Expr,
+        ctx: &mut FunctionContext,
+        lines: &mut Vec<String>,
+    ) {
+        let false_label = self.new_label("logic_and_false");
+        let end_label = self.new_label("logic_and_end");
+
+        self.emit_expr(left, ctx, lines);
+        lines.push("    cmp rax, 0".to_string());
+        lines.push(format!("    je {}", false_label));
+
+        self.emit_expr(right, ctx, lines);
+        lines.push("    cmp rax, 0".to_string());
+        lines.push("    setne al".to_string());
+        lines.push("    movzx rax, al".to_string());
+        lines.push(format!("    jmp {}", end_label));
+
+        lines.push(format!("{}:", false_label));
+        lines.push("    mov rax, 0".to_string());
+        lines.push(format!("{}:", end_label));
+    }
+
+    fn emit_short_circuit_or(
+        &mut self,
+        left: &Expr,
+        right: &Expr,
+        ctx: &mut FunctionContext,
+        lines: &mut Vec<String>,
+    ) {
+        let true_label = self.new_label("logic_or_true");
+        let end_label = self.new_label("logic_or_end");
+
+        self.emit_expr(left, ctx, lines);
+        lines.push("    cmp rax, 0".to_string());
+        lines.push(format!("    jne {}", true_label));
+
+        self.emit_expr(right, ctx, lines);
+        lines.push("    cmp rax, 0".to_string());
+        lines.push("    setne al".to_string());
+        lines.push("    movzx rax, al".to_string());
+        lines.push(format!("    jmp {}", end_label));
+
+        lines.push(format!("{}:", true_label));
+        lines.push("    mov rax, 1".to_string());
+        lines.push(format!("{}:", end_label));
     }
 
     fn emit_literal(
@@ -1677,6 +1719,40 @@ fun main(): Num {
         assert!(output.contains(".for_loop_"));
         assert!(output.contains("cmp rcx, QWORD [rbx]"));
         assert!(output.contains("mov rax, QWORD [rbx + rcx*8 + 8]"));
+    }
+
+    #[test]
+    fn lowers_logical_and_or_with_short_circuit_control_flow() {
+        let source = r#"
+fun main() -> Num {
+    var a: Bool = false && (1 / 0 > 0);
+    var b: Bool = true || (1 / 0 > 0);
+    if a {
+        return 1;
+    }
+    if b {
+        return 0;
+    }
+    return 2;
+}
+"#;
+
+        let mut lexer = Lexer::from_source(source);
+        let tokens = lexer.lex_file();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse();
+
+        let mut generator = AsmGenerator::new();
+        let output = generator.generate(&ast);
+
+        assert!(output.contains(".logic_and_false_"));
+        assert!(output.contains(".logic_and_end_"));
+        assert!(output.contains(".logic_or_true_"));
+        assert!(output.contains(".logic_or_end_"));
+        assert!(output.contains("je .logic_and_false_"));
+        assert!(output.contains("jne .logic_or_true_"));
+        assert!(!output.contains("and rax, rbx"));
+        assert!(!output.contains("or rax, rbx"));
     }
 
     #[test]
