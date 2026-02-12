@@ -18,3 +18,7 @@ This prints generated output to stdout.
 - Spec: `/Users/vlad/workspace/rusty/kekar/docs/kek-v1.md`
 - Lexicon source of truth: `/Users/vlad/workspace/rusty/kekar/docs/lexicon-v1.toml`
 - Implementation checklist: `/Users/vlad/workspace/rusty/kekar/docs/kek-v1-checklist.md`
+
+## VS Code syntax highlighting
+- Extension folder: `/Users/vlad/workspace/rusty/kekar/tools/vscode-kek`
+- Open that folder in VS Code and press `F5` to run an Extension Development Host.
