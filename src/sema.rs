@@ -1198,7 +1198,12 @@ impl SemanticAnalyzer {
                 Literal::Identifier(name) => match self.lookup_symbol(name) {
                     Some(symbol) => symbol.ty.clone(),
                     None => {
-                        self.error(format!("Unknown identifier '{}'", name));
+                        if !self.modules.contains_key(name)
+                            && !self.imports.contains_key(name)
+                            && !self.uses.contains_key(name)
+                        {
+                            self.error(format!("Unknown identifier '{}'", name));
+                        }
                         Type::None
                     }
                 },
@@ -1322,7 +1327,8 @@ impl SemanticAnalyzer {
                             );
                             Type::Identifier(enum_name)
                         } else if self.imports.contains_key(name) || self.uses.contains_key(name) {
-                            Type::Identifier(name.clone())
+                            // Cross-module callable/type resolution is validated during workspace analysis.
+                            Type::None
                         } else {
                             self.error(format!("Unknown function or constructor '{}'", name));
                             Type::None
@@ -1636,9 +1642,9 @@ mod tests {
     use super::{is_assignable, SemanticAnalyzer, Visibility};
     use crate::{
         ast::{
-            BlockStmt, ClassStmt, Expr, ExprStmt, FieldDecl, FunStmt, ImplStmt, Literal, MatchArm,
-            MatchStmt, MemberExpr, ModStmt, Param, Pattern, ReturnStmt, Stmt, StructStmt, Type,
-            UseStmt, VarStmt,
+            BlockStmt, CallExpr, ClassStmt, Expr, ExprStmt, FieldDecl, FunStmt, ImplStmt, Literal,
+            MatchArm, MatchStmt, MemberExpr, ModStmt, Param, Pattern, ReturnStmt, Stmt, StructStmt,
+            Type, UseStmt, VarStmt,
         },
         lexer::Token,
     };
@@ -1811,6 +1817,42 @@ mod tests {
         assert!(analyzer.errors[0]
             .message
             .contains("Function 'sum' expects 2 args, got 1"));
+    }
+
+    #[test]
+    fn imported_or_used_call_target_defers_to_workspace_resolution() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.register_use(
+            &UseStmt {
+                path: "util::add".to_string(),
+            },
+            Visibility::Private,
+        );
+
+        let ty = analyzer.analyze_expr(&Expr::Call(CallExpr {
+            callee: Box::new(Expr::Literal(Literal::Identifier("add".to_string()))),
+            arguments: vec![],
+        }));
+
+        assert_eq!(ty, Type::None);
+        assert!(analyzer.errors.is_empty());
+    }
+
+    #[test]
+    fn imported_or_module_identifier_defers_to_workspace_resolution() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.register_import(
+            &crate::ast::ImportStmt {
+                import: "Util".to_string(),
+                from: "./util.kek".to_string(),
+                alias: None,
+            },
+            Visibility::Private,
+        );
+
+        let ty = analyzer.analyze_expr(&Expr::Literal(Literal::Identifier("Util".to_string())));
+        assert_eq!(ty, Type::None);
+        assert!(analyzer.errors.is_empty());
     }
 
     #[test]

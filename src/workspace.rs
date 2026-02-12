@@ -73,6 +73,12 @@ struct TypeKey {
     name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FunctionKey {
+    module: PathBuf,
+    name: String,
+}
+
 #[derive(Debug, Clone)]
 struct MethodInfo {
     visibility: bool,
@@ -86,6 +92,13 @@ struct TypeInfo {
     visibility: bool,
     fields: HashMap<String, Type>,
     methods: HashMap<String, MethodInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct FunctionInfo {
+    visibility: bool,
+    params: Vec<Type>,
+    return_type: Type,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,8 +161,16 @@ pub fn analyze_workspace(entry_path: impl AsRef<Path>) -> Result<(), Vec<Semanti
         build_type_index(&linker.modules, &entry_module);
     errors.extend(type_errors);
 
-    let method_errors =
-        validate_module_method_calls(&linker.modules, &type_index, &module_type_namespaces);
+    let (function_index, module_function_namespaces) =
+        build_function_index(&linker.modules, &entry_module);
+
+    let method_errors = validate_module_method_calls(
+        &linker.modules,
+        &type_index,
+        &module_type_namespaces,
+        &function_index,
+        &module_function_namespaces,
+    );
     errors.extend(method_errors);
 
     if errors.is_empty() {
@@ -757,10 +778,70 @@ fn build_type_index(
     (type_index, module_type_namespaces, errors)
 }
 
+fn build_function_index(
+    modules: &HashMap<PathBuf, LinkedModule>,
+    entry_module: &Path,
+) -> (
+    HashMap<FunctionKey, FunctionInfo>,
+    HashMap<PathBuf, HashMap<String, FunctionKey>>,
+) {
+    let mut function_index = HashMap::<FunctionKey, FunctionInfo>::new();
+    let mut module_function_namespaces = HashMap::<PathBuf, HashMap<String, FunctionKey>>::new();
+
+    for (module_path, module) in modules {
+        let mut local_functions = HashMap::new();
+        for stmt in &module.ast.stmts {
+            let (inner, public) = strip_pub(stmt);
+            if let Stmt::Fun(fun_stmt) = inner {
+                let key = FunctionKey {
+                    module: module_path.clone(),
+                    name: fun_stmt.name.clone(),
+                };
+                local_functions.insert(fun_stmt.name.clone(), key.clone());
+                function_index.entry(key).or_insert(FunctionInfo {
+                    visibility: public,
+                    params: fun_stmt
+                        .params
+                        .iter()
+                        .map(|param| param.param_type.clone())
+                        .collect(),
+                    return_type: fun_stmt.return_type.clone(),
+                });
+            }
+        }
+        module_function_namespaces.insert(module_path.clone(), local_functions);
+    }
+
+    for (module_path, module) in modules {
+        let namespace = module_function_namespaces
+            .entry(module_path.clone())
+            .or_default();
+
+        for stmt in &module.ast.stmts {
+            let (inner, _) = strip_pub(stmt);
+            if let Stmt::Use(use_stmt) = inner {
+                if let Some(function_key) = resolve_function_path(
+                    modules,
+                    module,
+                    entry_module,
+                    &use_stmt.path,
+                    &function_index,
+                ) {
+                    namespace.insert(use_binding_name(use_stmt), function_key);
+                }
+            }
+        }
+    }
+
+    (function_index, module_function_namespaces)
+}
+
 fn validate_module_method_calls(
     modules: &HashMap<PathBuf, LinkedModule>,
     type_index: &HashMap<TypeKey, TypeInfo>,
     module_type_namespaces: &HashMap<PathBuf, HashMap<String, TypeKey>>,
+    function_index: &HashMap<FunctionKey, FunctionInfo>,
+    module_function_namespaces: &HashMap<PathBuf, HashMap<String, FunctionKey>>,
 ) -> Vec<SemanticError> {
     let mut errors = Vec::new();
     let mut module_paths = modules.keys().cloned().collect::<Vec<_>>();
@@ -770,15 +851,21 @@ fn validate_module_method_calls(
         let Some(module) = modules.get(&module_path) else {
             continue;
         };
-        let Some(namespace) = module_type_namespaces.get(&module_path) else {
+        let Some(type_namespace) = module_type_namespaces.get(&module_path) else {
+            continue;
+        };
+        let Some(function_namespace) = module_function_namespaces.get(&module_path) else {
             continue;
         };
 
         let mut resolver = MethodCallResolver::new(
             module,
-            namespace.clone(),
+            type_namespace.clone(),
             type_index,
             module_type_namespaces,
+            module_function_namespaces,
+            function_namespace.clone(),
+            function_index,
         );
         resolver.analyze_module();
         errors.extend(resolver.errors);
@@ -789,9 +876,12 @@ fn validate_module_method_calls(
 
 struct MethodCallResolver<'a> {
     module: &'a LinkedModule,
-    module_namespace: HashMap<String, TypeKey>,
+    module_type_namespace: HashMap<String, TypeKey>,
     type_index: &'a HashMap<TypeKey, TypeInfo>,
     module_type_namespaces: &'a HashMap<PathBuf, HashMap<String, TypeKey>>,
+    module_function_namespaces: &'a HashMap<PathBuf, HashMap<String, FunctionKey>>,
+    module_function_namespace: HashMap<String, FunctionKey>,
+    function_index: &'a HashMap<FunctionKey, FunctionInfo>,
     scopes: Vec<HashMap<String, ValueType>>,
     current_impl_type: Option<TypeKey>,
     errors: Vec<SemanticError>,
@@ -800,15 +890,21 @@ struct MethodCallResolver<'a> {
 impl<'a> MethodCallResolver<'a> {
     fn new(
         module: &'a LinkedModule,
-        module_namespace: HashMap<String, TypeKey>,
+        module_type_namespace: HashMap<String, TypeKey>,
         type_index: &'a HashMap<TypeKey, TypeInfo>,
         module_type_namespaces: &'a HashMap<PathBuf, HashMap<String, TypeKey>>,
+        module_function_namespaces: &'a HashMap<PathBuf, HashMap<String, FunctionKey>>,
+        module_function_namespace: HashMap<String, FunctionKey>,
+        function_index: &'a HashMap<FunctionKey, FunctionInfo>,
     ) -> Self {
         Self {
             module,
-            module_namespace,
+            module_type_namespace,
             type_index,
             module_type_namespaces,
+            module_function_namespaces,
+            module_function_namespace,
+            function_index,
             scopes: vec![HashMap::new()],
             current_impl_type: None,
             errors: Vec::new(),
@@ -827,7 +923,7 @@ impl<'a> MethodCallResolver<'a> {
             Stmt::Fun(fun_stmt) => self.analyze_fun(fun_stmt),
             Stmt::Impl(impl_stmt) => {
                 let impl_type = self
-                    .module_namespace
+                    .module_type_namespace
                     .get(&impl_stmt.name)
                     .cloned()
                     .or_else(|| {
@@ -983,7 +1079,7 @@ impl<'a> MethodCallResolver<'a> {
                 .lookup_symbol(name)
                 .cloned()
                 .or_else(|| {
-                    self.module_namespace
+                    self.module_type_namespace
                         .get(name)
                         .cloned()
                         .map(ValueType::User)
@@ -1047,7 +1143,18 @@ impl<'a> MethodCallResolver<'a> {
             .collect::<Vec<_>>();
 
         match callee {
+            Expr::Literal(Literal::Identifier(name)) => {
+                self.analyze_identifier_function_call(name, &arg_types)
+            }
             Expr::Mebmer(member) => {
+                if let Some(target_module) = self.resolve_module_binding(member.member.as_ref()) {
+                    return self.analyze_module_function_call(
+                        &target_module,
+                        &member.property,
+                        &arg_types,
+                    );
+                }
+
                 let receiver_type = self.analyze_expr(member.member.as_ref());
                 let ValueType::User(type_key) = receiver_type else {
                     return ValueType::Unknown;
@@ -1119,6 +1226,108 @@ impl<'a> MethodCallResolver<'a> {
                 self.analyze_expr(callee);
                 ValueType::Unknown
             }
+        }
+    }
+
+    fn analyze_identifier_function_call(
+        &mut self,
+        name: &str,
+        arg_types: &[ValueType],
+    ) -> ValueType {
+        if self.lookup_symbol(name).is_some() {
+            return ValueType::Unknown;
+        }
+
+        let Some(function_key) = self.module_function_namespace.get(name).cloned() else {
+            return ValueType::Unknown;
+        };
+
+        self.analyze_function_call_by_key(&function_key, name, arg_types)
+    }
+
+    fn analyze_module_function_call(
+        &mut self,
+        target_module: &Path,
+        function_name: &str,
+        arg_types: &[ValueType],
+    ) -> ValueType {
+        let Some(namespace) = self.module_function_namespaces.get(target_module) else {
+            return ValueType::Unknown;
+        };
+
+        let Some(function_key) = namespace.get(function_name).cloned() else {
+            self.error(format!(
+                "Unknown function '{}.{}'",
+                target_module.display(),
+                function_name
+            ));
+            return ValueType::Unknown;
+        };
+
+        self.analyze_function_call_by_key(&function_key, function_name, arg_types)
+    }
+
+    fn analyze_function_call_by_key(
+        &mut self,
+        function_key: &FunctionKey,
+        display_name: &str,
+        arg_types: &[ValueType],
+    ) -> ValueType {
+        let Some(function_info) = self.function_index.get(function_key) else {
+            return ValueType::Unknown;
+        };
+
+        if !function_info.visibility && self.module.path != function_key.module {
+            self.error(format!(
+                "Function '{}' is private and cannot be called from '{}'",
+                display_name,
+                self.module.path.display()
+            ));
+        }
+
+        if function_info.params.len() != arg_types.len() {
+            self.error(format!(
+                "Function '{}' expects {} args, got {}",
+                display_name,
+                function_info.params.len(),
+                arg_types.len()
+            ));
+        }
+
+        let function_namespace = self
+            .module_type_namespaces
+            .get(&function_key.module)
+            .cloned()
+            .unwrap_or_default();
+
+        for (index, (expected, actual)) in function_info
+            .params
+            .iter()
+            .zip(arg_types.iter())
+            .enumerate()
+        {
+            let expected_ty =
+                type_to_value_type(expected, &function_namespace).unwrap_or(ValueType::Unknown);
+            if !value_type_assignable(&expected_ty, actual) {
+                self.error(format!(
+                    "Argument {} for function '{}' expected {:?}, got {:?}",
+                    index, display_name, expected_ty, actual
+                ));
+            }
+        }
+
+        type_to_value_type(&function_info.return_type, &function_namespace)
+            .unwrap_or(ValueType::Unknown)
+    }
+
+    fn resolve_module_binding(&self, expr: &Expr) -> Option<PathBuf> {
+        match expr {
+            Expr::Literal(Literal::Identifier(name)) => self
+                .module
+                .bindings
+                .get(name)
+                .map(|binding| binding.target.clone()),
+            _ => None,
         }
     }
 
@@ -1271,6 +1480,88 @@ fn resolve_type_path(
         if item.kind != ItemKind::Module {
             return None;
         }
+        current_module_path = item.target_module.clone()?;
+        segment_index += 1;
+    }
+
+    None
+}
+
+fn resolve_function_path(
+    modules: &HashMap<PathBuf, LinkedModule>,
+    module: &LinkedModule,
+    entry_module: &Path,
+    path: &str,
+    function_index: &HashMap<FunctionKey, FunctionInfo>,
+) -> Option<FunctionKey> {
+    let segments = path
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if segments.is_empty() {
+        return None;
+    }
+
+    let root = segments[0];
+    if matches!(root, "std" | "core") {
+        return None;
+    }
+
+    let mut current_module_path;
+    let mut segment_index = 1usize;
+
+    match root {
+        "crate" => {
+            current_module_path = entry_module.to_path_buf();
+        }
+        "self" => {
+            current_module_path = module.path.clone();
+        }
+        "super" => {
+            current_module_path = module.parent.clone()?;
+        }
+        _ => {
+            let root_item = module.items.get(root)?;
+            if root_item.kind == ItemKind::Module {
+                current_module_path = root_item.target_module.clone()?;
+            } else if root_item.kind == ItemKind::Symbol && segments.len() == 1 {
+                let key = FunctionKey {
+                    module: module.path.clone(),
+                    name: root.to_string(),
+                };
+                if function_index.contains_key(&key) {
+                    return Some(key);
+                }
+                return None;
+            } else {
+                return None;
+            }
+        }
+    }
+
+    while segment_index < segments.len() {
+        let segment = segments[segment_index];
+        let is_last = segment_index + 1 == segments.len();
+        let current_module = modules.get(&current_module_path)?;
+        let item = current_module.items.get(segment)?;
+
+        if is_last {
+            if item.kind == ItemKind::Symbol {
+                let key = FunctionKey {
+                    module: current_module_path.clone(),
+                    name: segment.to_string(),
+                };
+                if function_index.contains_key(&key) {
+                    return Some(key);
+                }
+            }
+            return None;
+        }
+
+        if item.kind != ItemKind::Module {
+            return None;
+        }
+
         current_module_path = item.target_module.clone()?;
         segment_index += 1;
     }
@@ -1449,12 +1740,13 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    use crate::ast::{BlockStmt, ImportStmt, ModStmt, PubStmt, Stmt, StructStmt, UseStmt};
+    use crate::ast::{BlockStmt, ImportStmt, ModStmt, PubStmt, Stmt, StructStmt, Type, UseStmt};
 
     use super::{
-        collect_dependency_requests, collect_module_items, import_binding_name, resolve_type_path,
-        type_to_value_type, use_binding_name, value_type_assignable, ItemInfo, ItemKind,
-        LinkedModule, MethodInfo, ModuleBinding, TypeInfo, TypeKey, ValueType,
+        collect_dependency_requests, collect_module_items, import_binding_name,
+        resolve_function_path, resolve_type_path, type_to_value_type, use_binding_name,
+        value_type_assignable, FunctionInfo, FunctionKey, ItemInfo, ItemKind, LinkedModule,
+        MethodInfo, ModuleBinding, TypeInfo, TypeKey, ValueType,
     };
 
     fn empty_module(path: &str) -> LinkedModule {
@@ -1681,6 +1973,100 @@ mod tests {
             "util::Point",
             &type_index,
             true,
+        );
+
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn resolve_function_path_resolves_public_function_through_module_binding() {
+        let root_path = PathBuf::from("/tmp/root.kek");
+        let util_path = PathBuf::from("/tmp/util.kek");
+        let function_key = FunctionKey {
+            module: util_path.clone(),
+            name: "add".to_string(),
+        };
+
+        let mut root_module = empty_module("/tmp/root.kek");
+        root_module.items.insert(
+            "util".to_string(),
+            ItemInfo {
+                kind: ItemKind::Module,
+                public: true,
+                target_module: Some(util_path.clone()),
+            },
+        );
+
+        let mut util_module = empty_module("/tmp/util.kek");
+        util_module.items.insert(
+            "add".to_string(),
+            ItemInfo {
+                kind: ItemKind::Symbol,
+                public: true,
+                target_module: None,
+            },
+        );
+
+        let mut modules = HashMap::new();
+        modules.insert(root_path.clone(), root_module.clone());
+        modules.insert(util_path.clone(), util_module);
+
+        let mut function_index = HashMap::new();
+        function_index.insert(
+            function_key.clone(),
+            FunctionInfo {
+                visibility: true,
+                params: vec![Type::Num, Type::Num],
+                return_type: Type::Num,
+            },
+        );
+
+        let resolved = resolve_function_path(
+            &modules,
+            &root_module,
+            Path::new("/tmp/root.kek"),
+            "util::add",
+            &function_index,
+        );
+
+        assert_eq!(resolved, Some(function_key));
+    }
+
+    #[test]
+    fn resolve_function_path_ignores_non_function_symbols() {
+        let root_path = PathBuf::from("/tmp/root.kek");
+        let util_path = PathBuf::from("/tmp/util.kek");
+
+        let mut root_module = empty_module("/tmp/root.kek");
+        root_module.items.insert(
+            "util".to_string(),
+            ItemInfo {
+                kind: ItemKind::Module,
+                public: true,
+                target_module: Some(util_path.clone()),
+            },
+        );
+
+        let mut util_module = empty_module("/tmp/util.kek");
+        util_module.items.insert(
+            "Point".to_string(),
+            ItemInfo {
+                kind: ItemKind::Type,
+                public: true,
+                target_module: None,
+            },
+        );
+
+        let mut modules = HashMap::new();
+        modules.insert(root_path.clone(), root_module.clone());
+        modules.insert(util_path, util_module);
+
+        let resolved = resolve_function_path(
+            &modules,
+            &root_module,
+            Path::new("/tmp/root.kek"),
+            "util::Point",
+            &HashMap::new(),
         );
 
         assert_eq!(resolved, None);
