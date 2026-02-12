@@ -19,6 +19,10 @@ If you have `vsce` installed:
 
 ```bash
 cd /Users/vlad/workspace/rusty/kekar/tools/vscode-kek
-vsce package
+npx @vscode/vsce@3.6.2 package --skip-license
 code --install-extension kek-language-0.1.0.vsix
 ```
+
+Notes:
+- Current Homebrew `vsce` 3.7.1 may fail packaging in some environments due to a secret-scan concurrency bug (`Expected concurrency ... got 0`).
+- If you use a global install, pin to `@vscode/vsce@3.6.2` for now.

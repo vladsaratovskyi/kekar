@@ -22,3 +22,6 @@ This prints generated output to stdout.
 ## VS Code syntax highlighting
 - Extension folder: `/Users/vlad/workspace/rusty/kekar/tools/vscode-kek`
 - Open that folder in VS Code and press `F5` to run an Extension Development Host.
+- Package locally (recommended with pinned `vsce`):
+  - `cd /Users/vlad/workspace/rusty/kekar/tools/vscode-kek`
+  - `npx @vscode/vsce@3.6.2 package --skip-license`

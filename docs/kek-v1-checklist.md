@@ -1,7 +1,7 @@
 # Kek v1 Implementation Checklist
 
 Status date: `2026-02-12`  
-Last updated for commit: `aed5b8d` + stage 9 planning
+Last updated for commit: `1efc351`
 
 ## Stage 1: Freeze grammar + compatibility rules
 - [x] Freeze v1 grammar and compatibility contract in `/Users/vlad/workspace/rusty/kekar/docs/kek-v1.md`
@@ -73,10 +73,10 @@ Last updated for commit: `aed5b8d` + stage 9 planning
 - [x] Replace remaining parser-internal panic paths with structured parser errors (no panic/catch control flow)
 - [x] Implement semantic/runtime representation for generic types beyond parse-only consumption
 - [x] Add backend e2e coverage for multi-file cross-module execution (assemble/link/run path)
-- [ ] Run backend e2e in a supported CI/runtime target (linux x86_64) instead of skip-only on unsupported hosts
+- [x] Run backend e2e in a supported CI/runtime target (linux x86_64) instead of skip-only on unsupported hosts
 
 ## Stage 9: Self-host closure
-- [ ] Add linux x86_64 CI job with `nasm` + `ld` and require backend e2e execution (no skip path on the CI target)
+- [x] Add linux x86_64 CI job with `nasm` + `ld` and require backend e2e execution (no skip path on the CI target)
 - [x] Introduce filesystem-backed standard library root (`core`/`std`) and remove special-case unresolved acceptance for those roots
 - [x] Define and implement minimal bootstrap stdlib modules required by compiler code (`std::fs`, `std::path`, `std::io`, `std::string`, `std::collections`)
 - [x] Enforce concrete symbol/type resolution for `std`/`core` paths in workspace type/function resolution (fail on missing symbols)
