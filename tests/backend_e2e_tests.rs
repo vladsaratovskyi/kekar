@@ -41,6 +41,19 @@ fn ensure_backend_e2e_runtime() -> Result<(), String> {
     Ok(())
 }
 
+fn backend_e2e_runtime_ready() -> bool {
+    match ensure_backend_e2e_runtime() {
+        Ok(()) => true,
+        Err(reason) => {
+            if std::env::var("KEKAR_REQUIRE_BACKEND_E2E").as_deref() == Ok("1") {
+                panic!("backend e2e runtime is required: {reason}");
+            }
+            eprintln!("skipping backend e2e test: {reason}");
+            false
+        }
+    }
+}
+
 fn compile_asm_and_run(source: &str, name: &str) -> Result<i32, String> {
     let mut lexer = Lexer::from_source(source);
     let tokens = lexer
@@ -150,8 +163,7 @@ fn compile_workspace_entry_and_run(entry: &Path, name: &str) -> Result<i32, Stri
 
 #[test]
 fn backend_e2e_runs_main_return_value() {
-    if let Err(reason) = ensure_backend_e2e_runtime() {
-        eprintln!("skipping backend e2e test: {reason}");
+    if !backend_e2e_runtime_ready() {
         return;
     }
 
@@ -170,8 +182,7 @@ fun main() -> Num {
 
 #[test]
 fn backend_e2e_runs_struct_method_and_loop_program() {
-    if let Err(reason) = ensure_backend_e2e_runtime() {
-        eprintln!("skipping backend e2e test: {reason}");
+    if !backend_e2e_runtime_ready() {
         return;
     }
 
@@ -204,8 +215,7 @@ fun main() -> Num {
 
 #[test]
 fn backend_e2e_runs_enum_constructor_and_match_program() {
-    if let Err(reason) = ensure_backend_e2e_runtime() {
-        eprintln!("skipping backend e2e test: {reason}");
+    if !backend_e2e_runtime_ready() {
         return;
     }
 
@@ -237,8 +247,7 @@ fun main() -> Num {
 
 #[test]
 fn backend_e2e_short_circuits_logical_and_or_rhs() {
-    if let Err(reason) = ensure_backend_e2e_runtime() {
-        eprintln!("skipping backend e2e test: {reason}");
+    if !backend_e2e_runtime_ready() {
         return;
     }
 
@@ -269,8 +278,7 @@ fun main() -> Num {
 
 #[test]
 fn backend_e2e_runs_cross_module_import_function_call() {
-    if let Err(reason) = ensure_backend_e2e_runtime() {
-        eprintln!("skipping backend e2e test: {reason}");
+    if !backend_e2e_runtime_ready() {
         return;
     }
 
@@ -309,8 +317,7 @@ pub fun add(a: Num, b: Num) -> Num {
 
 #[test]
 fn backend_e2e_runs_full_syntax_example_program() {
-    if let Err(reason) = ensure_backend_e2e_runtime() {
-        eprintln!("skipping backend e2e test: {reason}");
+    if !backend_e2e_runtime_ready() {
         return;
     }
 
@@ -326,8 +333,7 @@ fn backend_e2e_runs_full_syntax_example_program() {
 
 #[test]
 fn backend_e2e_runs_bundled_std_string_basic_runtime_api() {
-    if let Err(reason) = ensure_backend_e2e_runtime() {
-        eprintln!("skipping backend e2e test: {reason}");
+    if !backend_e2e_runtime_ready() {
         return;
     }
 
@@ -374,8 +380,7 @@ fun main() -> Num {
 
 #[test]
 fn backend_e2e_runs_array_methods_runtime() {
-    if let Err(reason) = ensure_backend_e2e_runtime() {
-        eprintln!("skipping backend e2e test: {reason}");
+    if !backend_e2e_runtime_ready() {
         return;
     }
 

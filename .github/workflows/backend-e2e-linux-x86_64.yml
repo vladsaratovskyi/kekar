@@ -1,0 +1,48 @@
+name: Backend E2E Linux x86_64
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  KEKAR_REQUIRE_BACKEND_E2E: "1"
+
+jobs:
+  backend-e2e-linux-x86_64:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify runner architecture
+        run: |
+          uname -a
+          test "$(uname -m)" = "x86_64"
+
+      - name: Install NASM and linker toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm binutils
+          nasm --version
+          ld --version
+
+      - name: Run backend e2e tests (required)
+        run: cargo test --verbose --test backend_e2e_tests
+
+      - name: Compile Kek source to ASM with compiler CLI
+        run: |
+          cargo run --quiet -- example/full_syntax.kek --target asm > /tmp/kekar-full-syntax.asm
+          test -s /tmp/kekar-full-syntax.asm
+
+      - name: Assemble, link, run ELF and verify output
+        run: |
+          nasm -f elf64 /tmp/kekar-full-syntax.asm -o /tmp/kekar-full-syntax.o
+          ld -o /tmp/kekar-full-syntax.out /tmp/kekar-full-syntax.o
+          set +e
+          /tmp/kekar-full-syntax.out
+          code=$?
+          set -e
+          if [ "$code" -ne 12 ]; then
+            echo "expected exit code 12 from compiled program, got $code"
+            exit 1
+          fi
