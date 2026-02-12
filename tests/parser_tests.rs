@@ -922,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_generic_type_annotation_erases_to_base_identifier_type() {
+    fn parse_generic_type_annotation_preserves_generic_structure() {
         let tokens = vec![
             Token::Fun,
             Token::Identifier("main".to_string()),
@@ -955,7 +955,10 @@ mod tests {
                 return_type: Type::Num,
                 params: vec![Param {
                     name: "value".to_string(),
-                    param_type: Type::Identifier("Result".to_string()),
+                    param_type: Type::Generic {
+                        base: "Result".to_string(),
+                        args: vec![Type::Num, Type::String],
+                    },
                 }],
                 block: Box::new(Stmt::Block(BlockStmt {
                     stmts: vec![Stmt::Return(ReturnStmt {
@@ -1001,7 +1004,13 @@ mod tests {
 
         assert_eq!(
             fun_stmt.params[0].param_type,
-            Type::Identifier("Outer".to_string())
+            Type::Generic {
+                base: "Outer".to_string(),
+                args: vec![Type::Generic {
+                    base: "Inner".to_string(),
+                    args: vec![Type::Num],
+                }],
+            }
         );
     }
 

@@ -115,6 +115,7 @@ enum ValueType {
     Bool,
     Void,
     User(TypeKey),
+    GenericUser(TypeKey, Vec<ValueType>),
     Array(Box<ValueType>),
     Unknown,
 }
@@ -1701,7 +1702,7 @@ impl<'a> MethodCallResolver<'a> {
             Expr::Call(call) => self.analyze_call(call.callee.as_ref(), &call.arguments),
             Expr::Mebmer(member) => {
                 let owner_type = self.analyze_expr(member.member.as_ref());
-                if let ValueType::User(type_key) = owner_type {
+                if let Some(type_key) = user_type_key(&owner_type).cloned() {
                     if let Some(type_info) = self.type_index.get(&type_key) {
                         if let Some(field_type) = type_info.fields.get(&member.property) {
                             return self.resolve_declared_type(field_type, &type_key.module);
@@ -1749,7 +1750,7 @@ impl<'a> MethodCallResolver<'a> {
                 }
 
                 let receiver_type = self.analyze_expr(member.member.as_ref());
-                let ValueType::User(type_key) = receiver_type else {
+                let Some(type_key) = user_type_key(&receiver_type).cloned() else {
                     return ValueType::Unknown;
                 };
 
@@ -1990,6 +1991,16 @@ fn value_type_assignable(expected: &ValueType, actual: &ValueType) -> bool {
     match (expected, actual) {
         (ValueType::Array(left), ValueType::Array(right)) => value_type_assignable(left, right),
         (ValueType::User(left), ValueType::User(right)) => left == right,
+        (ValueType::User(left), ValueType::GenericUser(right, _))
+        | (ValueType::GenericUser(left, _), ValueType::User(right)) => left == right,
+        (ValueType::GenericUser(left_key, left_args), ValueType::GenericUser(right_key, right_args)) => {
+            left_key == right_key
+                && left_args.len() == right_args.len()
+                && left_args
+                    .iter()
+                    .zip(right_args.iter())
+                    .all(|(left, right)| value_type_assignable(left, right))
+        }
         _ => expected == actual,
     }
 }
@@ -2003,9 +2014,25 @@ fn type_to_value_type(ty: &Type, namespace: &HashMap<String, TypeKey>) -> Option
         Type::Bool => Some(ValueType::Bool),
         Type::Void => Some(ValueType::Void),
         Type::Identifier(name) => namespace.get(name).cloned().map(ValueType::User),
+        Type::Generic { base, args } => {
+            let key = namespace.get(base).cloned()?;
+            let resolved_args = args
+                .iter()
+                .map(|arg| type_to_value_type(arg, namespace))
+                .collect::<Option<Vec<_>>>()?;
+            Some(ValueType::GenericUser(key, resolved_args))
+        }
         Type::Array(inner) => type_to_value_type(inner, namespace)
             .map(|resolved| ValueType::Array(Box::new(resolved))),
         Type::None => Some(ValueType::Unknown),
+    }
+}
+
+fn user_type_key(value_type: &ValueType) -> Option<&TypeKey> {
+    match value_type {
+        ValueType::User(key) => Some(key),
+        ValueType::GenericUser(key, _) => Some(key),
+        _ => None,
     }
 }
 
@@ -2465,6 +2492,37 @@ mod tests {
             &namespace,
         );
         assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn type_to_value_type_preserves_generic_user_arguments() {
+        let boxed_key = TypeKey {
+            module: PathBuf::from("/tmp/types.kek"),
+            name: "Boxed".to_string(),
+        };
+        let value_key = TypeKey {
+            module: PathBuf::from("/tmp/types.kek"),
+            name: "Value".to_string(),
+        };
+        let mut namespace = HashMap::new();
+        namespace.insert("Boxed".to_string(), boxed_key.clone());
+        namespace.insert("Value".to_string(), value_key.clone());
+
+        let resolved = type_to_value_type(
+            &crate::ast::Type::Generic {
+                base: "Boxed".to_string(),
+                args: vec![crate::ast::Type::Identifier("Value".to_string())],
+            },
+            &namespace,
+        );
+
+        assert_eq!(
+            resolved,
+            Some(ValueType::GenericUser(
+                boxed_key,
+                vec![ValueType::User(value_key)]
+            ))
+        );
     }
 
     #[test]

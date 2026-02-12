@@ -1083,7 +1083,7 @@ impl AsmGenerator {
                     lines.push("    mov rcx, rax".to_string());
                     lines.push("    pop rbx".to_string());
 
-                    if let Type::Identifier(type_name) = owner_type {
+                    if let Some(type_name) = user_type_name(&owner_type) {
                         if let Some(offset) = self.field_offset(&type_name, &member.property) {
                             lines.push(format!("    mov QWORD [rbx+{}], rcx", offset));
                             lines.push("    mov rax, rcx".to_string());
@@ -1153,7 +1153,7 @@ impl AsmGenerator {
             Expr::Mebmer(member) => {
                 let owner_type = self.infer_expr_type(member.member.as_ref(), ctx);
                 self.emit_expr(member.member.as_ref(), ctx, lines);
-                if let Type::Identifier(type_name) = owner_type {
+                if let Some(type_name) = user_type_name(&owner_type) {
                     if let Some(offset) = self.field_offset(&type_name, &member.property) {
                         lines.push(format!("    mov rax, QWORD [rax+{}]", offset));
                     } else {
@@ -1418,7 +1418,7 @@ impl AsmGenerator {
 
         lines.push("    pop rdi".to_string());
 
-        if let Type::Identifier(type_name) = receiver_type {
+        if let Some(type_name) = user_type_name(&receiver_type) {
             if let Some(methods) = self.method_sigs.get(&type_name) {
                 if let Some(sig) = methods.get(&member.property) {
                     if args.len() != sig.params.len() {
@@ -1486,7 +1486,7 @@ impl AsmGenerator {
             }
             Expr::Mebmer(member) => {
                 let owner_type = self.infer_expr_type(member.member.as_ref(), ctx);
-                if let Type::Identifier(type_name) = owner_type {
+                if let Some(type_name) = user_type_name(&owner_type) {
                     if let Some(layout) = self.type_layouts.get(&type_name) {
                         if let Some(field) = layout.fields.get(&member.property) {
                             return field.ty.clone();
@@ -1517,7 +1517,7 @@ impl AsmGenerator {
                 }
                 Expr::Mebmer(member) => {
                     let receiver_type = self.infer_expr_type(member.member.as_ref(), ctx);
-                    if let Type::Identifier(type_name) = receiver_type {
+                    if let Some(type_name) = user_type_name(&receiver_type) {
                         if let Some(methods) = self.method_sigs.get(&type_name) {
                             if let Some(sig) = methods.get(&member.property) {
                                 return sig.return_type.clone();
@@ -1659,6 +1659,14 @@ fn escape_asm_string(value: &str) -> String {
     format!("\"{}\"", escaped)
 }
 
+fn user_type_name(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Identifier(name) => Some(name.clone()),
+        Type::Generic { base, .. } => Some(base.clone()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeSet, HashMap};
@@ -1753,6 +1761,36 @@ fun main() -> Num {
         assert!(output.contains("jne .logic_or_true_"));
         assert!(!output.contains("and rax, rbx"));
         assert!(!output.contains("or rax, rbx"));
+    }
+
+    #[test]
+    fn lowers_generic_annotated_user_type_member_access_and_calls() {
+        let source = r#"
+struct Boxed {
+    value: Num;
+    fun read() -> Num {
+        return this.value;
+    }
+}
+
+fun main() -> Num {
+    var b: Boxed<Num> = Boxed(9);
+    var x: Num = b.value;
+    return b.read() + x;
+}
+"#;
+
+        let mut lexer = Lexer::from_source(source);
+        let tokens = lexer.lex_file();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse();
+
+        let mut generator = AsmGenerator::new();
+        let output = generator.generate(&ast);
+
+        assert!(output.contains("call Boxed__read"));
+        assert!(!output.contains("member access requires user type"));
+        assert!(!output.contains("dynamic/member call unsupported in asm backend"));
     }
 
     #[test]

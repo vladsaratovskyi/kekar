@@ -71,6 +71,6 @@ Last updated for commit: `ff76448` + readiness reevaluation
 - [x] Lower module-qualified calls (`Module.fun(...)`) to executable call targets in ASM backend
 - [x] Enforce spec-required short-circuit semantics for `&&` and `||` in ASM lowering
 - [x] Replace remaining parser-internal panic paths with structured parser errors (no panic/catch control flow)
-- [ ] Implement semantic/runtime representation for generic types beyond parse-only consumption
+- [x] Implement semantic/runtime representation for generic types beyond parse-only consumption
 - [x] Add backend e2e coverage for multi-file cross-module execution (assemble/link/run path)
 - [ ] Run backend e2e in a supported CI/runtime target (linux x86_64) instead of skip-only on unsupported hosts

@@ -231,6 +231,7 @@ pub enum Type {
     Bool,
     Void,
     Identifier(String),
+    Generic { base: String, args: Vec<Type> },
     Array(Box<Type>),
     None,
 }

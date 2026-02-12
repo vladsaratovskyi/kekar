@@ -71,6 +71,14 @@ fn format_type_for_hint(ty: &Type) -> String {
         Type::Bool => "Bool".to_string(),
         Type::Void => "Void".to_string(),
         Type::Identifier(name) => name.clone(),
+        Type::Generic { base, args } => format!(
+            "{}<{}>",
+            base,
+            args.iter()
+                .map(format_type_for_hint)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Type::Array(inner) => format!("{}[]", format_type_for_hint(inner)),
         Type::None => "None".to_string(),
     }
@@ -1047,7 +1055,7 @@ impl Parser {
 
     pub fn parse_type(&mut self) -> Type {
         let type_name = self.expect_identifier_get_name();
-        let t = match type_name.as_str() {
+        let mut t = match type_name.as_str() {
             "num" | "Num" => Type::Num,
             "char" | "Char" => Type::Char,
             "byte" | "Byte" => Type::Byte,
@@ -1064,10 +1072,11 @@ impl Parser {
             }
 
             self.expect(&Token::Less);
+            let mut generic_args = Vec::new();
             while self.has_tokens()
                 && !matches!(self.current_token(), Token::Greater | Token::ShiftRight)
             {
-                let _ = self.parse_type();
+                generic_args.push(self.parse_type());
                 if !matches!(
                     self.current_token(),
                     Token::Greater | Token::ShiftRight | Token::Eof
@@ -1081,6 +1090,13 @@ impl Parser {
                 self.tokens[self.current] = Token::Greater;
             } else {
                 self.expect(&Token::Greater);
+            }
+
+            if let Type::Identifier(base) = t {
+                t = Type::Generic {
+                    base,
+                    args: generic_args,
+                };
             }
         }
 

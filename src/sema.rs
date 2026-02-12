@@ -820,6 +820,12 @@ impl SemanticAnalyzer {
                     || self.imports.contains_key(name)
                     || self.uses.contains_key(name)
             }
+            Type::Generic { base, args } => {
+                (self.type_defs.contains_key(base)
+                    || self.imports.contains_key(base)
+                    || self.uses.contains_key(base))
+                    && args.iter().all(|arg| self.is_known_type(arg))
+            }
             Type::None => true,
         }
     }
@@ -1106,8 +1112,8 @@ impl SemanticAnalyzer {
 
     fn analyze_match_stmt(&mut self, match_stmt: &MatchStmt) {
         let scrutinee_type = self.analyze_expr(&match_stmt.expr);
-        let enum_variants = match &scrutinee_type {
-            Type::Identifier(name) => match self.type_defs.get(name) {
+        let enum_variants = match user_type_base_name(&scrutinee_type) {
+            Some(name) => match self.type_defs.get(name) {
                 Some(TypeDef::Enum(enum_def)) => Some(enum_def.variants.clone()),
                 _ => None,
             },
@@ -1143,6 +1149,28 @@ impl SemanticAnalyzer {
                 }
             }
             Type::Identifier(enum_name) => {
+                if let Some(variants) = enum_variants {
+                    let missing = variants
+                        .keys()
+                        .filter(|variant| !seen_enum_variants.contains(*variant))
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    if !missing.is_empty() {
+                        self.error(format!(
+                            "Non-exhaustive match for enum '{}': missing {}",
+                            enum_name,
+                            missing.join(", ")
+                        ));
+                    }
+                } else {
+                    self.error(format!(
+                        "Non-exhaustive match for type {:?}: add '_' arm",
+                        scrutinee_type
+                    ));
+                }
+            }
+            Type::Generic { base: enum_name, .. } => {
                 if let Some(variants) = enum_variants {
                     let missing = variants
                         .keys()
@@ -1484,6 +1512,59 @@ impl SemanticAnalyzer {
                                     Type::None
                                 }
                             }
+                            Type::Generic { base: type_name, .. } => {
+                                let method = self
+                                    .impl_methods
+                                    .get(&type_name)
+                                    .and_then(|methods| methods.get(&member.property))
+                                    .cloned()
+                                    .or_else(|| {
+                                        self.type_defs.get(&type_name).and_then(|def| match def {
+                                            TypeDef::Class(class_def) => {
+                                                class_def.methods.get(&member.property).cloned()
+                                            }
+                                            _ => None,
+                                        })
+                                    });
+
+                                if let Some(method_sig) = method {
+                                    let _method_visibility = method_sig.visibility;
+                                    if method_sig.sig.params.len() != arg_types.len() {
+                                        self.error(format!(
+                                            "Method '{}.{}' expects {} args, got {}",
+                                            type_name,
+                                            member.property,
+                                            method_sig.sig.params.len(),
+                                            arg_types.len()
+                                        ));
+                                    }
+
+                                    for (index, (expected, actual)) in method_sig
+                                        .sig
+                                        .params
+                                        .iter()
+                                        .zip(arg_types.iter())
+                                        .enumerate()
+                                    {
+                                        if !is_assignable(expected, actual) {
+                                            self.error(format!(
+                                                "Argument {} for method '{}.{}' expected {:?}, got {:?}",
+                                                index, type_name, member.property, expected, actual
+                                            ));
+                                        }
+                                    }
+
+                                    method_sig.sig.return_type
+                                } else {
+                                    if self.type_defs.contains_key(&type_name) {
+                                        self.error(format!(
+                                            "Unknown method '{}.{}'",
+                                            type_name, member.property
+                                        ));
+                                    }
+                                    Type::None
+                                }
+                            }
                             Type::None => Type::None,
                             other => {
                                 self.error(format!(
@@ -1505,6 +1586,51 @@ impl SemanticAnalyzer {
                 let owner_ty = self.analyze_expr(member.member.as_ref());
                 match owner_ty {
                     Type::Identifier(type_name) => match self.type_defs.get(&type_name) {
+                        Some(TypeDef::Struct(def)) => {
+                            if let Some(field_ty) = def.fields.get(&member.property) {
+                                field_ty.clone()
+                            } else if def.methods.contains_key(&member.property)
+                                || self
+                                    .impl_methods
+                                    .get(&type_name)
+                                    .and_then(|methods| methods.get(&member.property))
+                                    .is_some()
+                            {
+                                Type::None
+                            } else {
+                                self.error(format!(
+                                    "Unknown field '{}.{}'",
+                                    type_name, member.property
+                                ));
+                                Type::None
+                            }
+                        }
+                        Some(TypeDef::Class(def)) => {
+                            if let Some(field_ty) = def.fields.get(&member.property) {
+                                field_ty.clone()
+                            } else if def.methods.contains_key(&member.property) {
+                                Type::None
+                            } else {
+                                self.error(format!(
+                                    "Unknown field '{}.{}'",
+                                    type_name, member.property
+                                ));
+                                Type::None
+                            }
+                        }
+                        Some(TypeDef::Enum(_)) => {
+                            self.error(format!(
+                                "Enum '{}' has no field '{}'",
+                                type_name, member.property
+                            ));
+                            Type::None
+                        }
+                        None => {
+                            self.error(format!("Member access on unknown type '{}'", type_name));
+                            Type::None
+                        }
+                    },
+                    Type::Generic { base: type_name, .. } => match self.type_defs.get(&type_name) {
                         Some(TypeDef::Struct(def)) => {
                             if let Some(field_ty) = def.fields.get(&member.property) {
                                 field_ty.clone()
@@ -1733,7 +1859,34 @@ fn is_assignable(expected: &Type, actual: &Type) -> bool {
     match (expected, actual) {
         (Type::Array(left), Type::Array(right)) => is_assignable(left, right),
         (Type::Identifier(left), Type::Identifier(right)) => left == right,
+        (
+            Type::Generic {
+                base: left_base,
+                args: left_args,
+            },
+            Type::Generic {
+                base: right_base,
+                args: right_args,
+            },
+        ) => {
+            left_base == right_base
+                && left_args.len() == right_args.len()
+                && left_args
+                    .iter()
+                    .zip(right_args.iter())
+                    .all(|(left, right)| is_assignable(left, right))
+        }
+        (Type::Identifier(left), Type::Generic { base: right, .. }) => left == right,
+        (Type::Generic { base: left, .. }, Type::Identifier(right)) => left == right,
         _ => expected == actual,
+    }
+}
+
+fn user_type_base_name(ty: &Type) -> Option<&str> {
+    match ty {
+        Type::Identifier(name) => Some(name),
+        Type::Generic { base, .. } => Some(base),
+        _ => None,
     }
 }
 
@@ -1762,6 +1915,40 @@ mod tests {
         assert!(!is_assignable(
             &Type::Array(Box::new(Type::Num)),
             &Type::Array(Box::new(Type::Bool))
+        ));
+        assert!(is_assignable(
+            &Type::Generic {
+                base: "Result".to_string(),
+                args: vec![Type::Num],
+            },
+            &Type::Generic {
+                base: "Result".to_string(),
+                args: vec![Type::Num],
+            }
+        ));
+        assert!(!is_assignable(
+            &Type::Generic {
+                base: "Result".to_string(),
+                args: vec![Type::Num],
+            },
+            &Type::Generic {
+                base: "Result".to_string(),
+                args: vec![Type::String],
+            }
+        ));
+        assert!(is_assignable(
+            &Type::Generic {
+                base: "Result".to_string(),
+                args: vec![Type::Num],
+            },
+            &Type::Identifier("Result".to_string())
+        ));
+        assert!(is_assignable(
+            &Type::Identifier("Result".to_string()),
+            &Type::Generic {
+                base: "Result".to_string(),
+                args: vec![Type::Num],
+            }
         ));
     }
 
