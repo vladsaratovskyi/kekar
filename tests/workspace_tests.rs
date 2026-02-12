@@ -438,3 +438,33 @@ pub fun add(a: Num, b: Num) -> Num {
 
     fs::remove_dir_all(root).expect("should clean test workspace");
 }
+
+#[test]
+fn workspace_rejects_private_cross_module_function_call_via_module_alias() {
+    let root = temp_workspace("function-private-module-alias");
+    let entry = root.join("main.kek");
+    let util = root.join("util.kek");
+
+    write_file(
+        &entry,
+        r#"
+import Util from "./util.kek";
+
+fun main() -> Num {
+    return Util.hidden();
+}
+"#,
+    );
+
+    write_file(
+        &util,
+        r#"
+fun hidden() -> Num {
+    return 1;
+}
+"#,
+    );
+
+    assert_has_error(&entry, "Function 'hidden' is private and cannot be called");
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}

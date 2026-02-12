@@ -1361,7 +1361,7 @@ impl<'a> MethodCallResolver<'a> {
             return ValueType::Unknown;
         };
 
-        if !function_info.visibility && self.module.path != function_key.module {
+        if !is_function_callable_from_module(function_info, &self.module.path, function_key) {
             self.error(format!(
                 "Function '{}' is private and cannot be called from '{}'",
                 display_name,
@@ -1463,6 +1463,14 @@ impl<'a> MethodCallResolver<'a> {
             message.into()
         )));
     }
+}
+
+fn is_function_callable_from_module(
+    function_info: &FunctionInfo,
+    caller_module: &Path,
+    function_key: &FunctionKey,
+) -> bool {
+    function_info.visibility || caller_module == function_key.module
 }
 
 fn value_type_assignable(expected: &ValueType, actual: &ValueType) -> bool {
@@ -1828,9 +1836,9 @@ mod tests {
 
     use super::{
         collect_dependency_requests, collect_module_items, import_binding_name,
-        resolve_function_path, resolve_type_path, type_to_value_type, use_binding_name,
-        value_type_assignable, FunctionInfo, FunctionKey, ItemInfo, ItemKind, LinkedModule,
-        MethodInfo, ModuleBinding, TypeInfo, TypeKey, ValueType,
+        is_function_callable_from_module, resolve_function_path, resolve_type_path,
+        type_to_value_type, use_binding_name, value_type_assignable, FunctionInfo, FunctionKey,
+        ItemInfo, ItemKind, LinkedModule, MethodInfo, ModuleBinding, TypeInfo, TypeKey, ValueType,
     };
 
     fn empty_module(path: &str) -> LinkedModule {
@@ -2154,6 +2162,41 @@ mod tests {
         );
 
         assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn function_visibility_enforces_cross_module_calls() {
+        let function_key = FunctionKey {
+            module: PathBuf::from("/tmp/util.kek"),
+            name: "hidden".to_string(),
+        };
+
+        let private_function = FunctionInfo {
+            visibility: false,
+            params: vec![],
+            return_type: Type::Num,
+        };
+        let public_function = FunctionInfo {
+            visibility: true,
+            params: vec![],
+            return_type: Type::Num,
+        };
+
+        assert!(!is_function_callable_from_module(
+            &private_function,
+            Path::new("/tmp/main.kek"),
+            &function_key,
+        ));
+        assert!(is_function_callable_from_module(
+            &private_function,
+            Path::new("/tmp/util.kek"),
+            &function_key,
+        ));
+        assert!(is_function_callable_from_module(
+            &public_function,
+            Path::new("/tmp/main.kek"),
+            &function_key,
+        ));
     }
 
     #[test]

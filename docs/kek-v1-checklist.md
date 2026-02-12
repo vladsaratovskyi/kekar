@@ -62,6 +62,6 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] Implement non-literal iterator lowering for `for` (not just compile-time array unroll)
 - [x] Complete match lowering for enum payload pattern checks and payload bindings
 - [x] Add cross-module function symbol typing and resolution (not only member-call checks)
-- [ ] Add callable visibility enforcement for cross-module function calls (`pub`/private)
+- [x] Add callable visibility enforcement for cross-module function calls (`pub`/private)
 - [ ] Add spec/implementation parity for currently frozen grammar features (generic type syntax, postfix `?`)
 - [ ] Add end-to-end backend tests that assemble/link/run generated ASM for representative programs
