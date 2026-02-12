@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    ast::{BlockStmt, ImportStmt, Stmt, UseStmt},
+    ast::{BlockStmt, Expr, FunStmt, ImportStmt, Literal, MatchStmt, Pattern, Stmt, Type, UseStmt},
     lexer::Lexer,
     parser::Parser,
     sema::{SemanticAnalyzer, SemanticError},
@@ -14,6 +14,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ItemKind {
     Module,
+    Type,
     Symbol,
 }
 
@@ -66,6 +67,40 @@ struct DependencyRequest {
     is_mod_decl: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TypeKey {
+    module: PathBuf,
+    name: String,
+}
+
+#[derive(Debug, Clone)]
+struct MethodInfo {
+    visibility: bool,
+    params: Vec<Type>,
+    return_type: Type,
+}
+
+#[derive(Debug, Clone)]
+struct TypeInfo {
+    module: PathBuf,
+    visibility: bool,
+    fields: HashMap<String, Type>,
+    methods: HashMap<String, MethodInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ValueType {
+    Num,
+    Char,
+    Byte,
+    String,
+    Bool,
+    Void,
+    User(TypeKey),
+    Array(Box<ValueType>),
+    Unknown,
+}
+
 pub fn analyze_workspace(entry_path: impl AsRef<Path>) -> Result<(), Vec<SemanticError>> {
     let mut linker = WorkspaceLinker::new();
     let Some(entry_module) = linker.load_entry(entry_path.as_ref()) else {
@@ -108,6 +143,14 @@ pub fn analyze_workspace(entry_path: impl AsRef<Path>) -> Result<(), Vec<Semanti
             }
         }
     }
+
+    let (type_index, module_type_namespaces, type_errors) =
+        build_type_index(&linker.modules, &entry_module);
+    errors.extend(type_errors);
+
+    let method_errors =
+        validate_module_method_calls(&linker.modules, &type_index, &module_type_namespaces);
+    errors.extend(method_errors);
 
     if errors.is_empty() {
         Ok(())
@@ -489,6 +532,703 @@ fn resolve_use_path(
     Ok(())
 }
 
+fn build_type_index(
+    modules: &HashMap<PathBuf, LinkedModule>,
+    entry_module: &Path,
+) -> (
+    HashMap<TypeKey, TypeInfo>,
+    HashMap<PathBuf, HashMap<String, TypeKey>>,
+    Vec<SemanticError>,
+) {
+    let mut errors = Vec::new();
+    let mut type_index = HashMap::<TypeKey, TypeInfo>::new();
+    let mut module_type_namespaces = HashMap::<PathBuf, HashMap<String, TypeKey>>::new();
+    let mut local_type_maps = HashMap::<PathBuf, HashMap<String, TypeKey>>::new();
+
+    for (module_path, module) in modules {
+        let mut local_types = HashMap::new();
+        for stmt in &module.ast.stmts {
+            let (inner, public) = strip_pub(stmt);
+            match inner {
+                Stmt::Struct(struct_stmt) => {
+                    let key = TypeKey {
+                        module: module_path.clone(),
+                        name: struct_stmt.name.clone(),
+                    };
+                    local_types.insert(struct_stmt.name.clone(), key.clone());
+                    type_index.insert(
+                        key.clone(),
+                        TypeInfo {
+                            module: module_path.clone(),
+                            visibility: public,
+                            fields: struct_stmt
+                                .fields
+                                .iter()
+                                .map(|field| (field.name.clone(), field.field_type.clone()))
+                                .collect(),
+                            methods: HashMap::new(),
+                        },
+                    );
+                }
+                Stmt::Enum(enum_stmt) => {
+                    let key = TypeKey {
+                        module: module_path.clone(),
+                        name: enum_stmt.name.clone(),
+                    };
+                    local_types.insert(enum_stmt.name.clone(), key.clone());
+                    type_index.insert(
+                        key,
+                        TypeInfo {
+                            module: module_path.clone(),
+                            visibility: public,
+                            fields: HashMap::new(),
+                            methods: HashMap::new(),
+                        },
+                    );
+                }
+                Stmt::Class(class_stmt) => {
+                    let key = TypeKey {
+                        module: module_path.clone(),
+                        name: class_stmt.name.clone(),
+                    };
+                    local_types.insert(class_stmt.name.clone(), key.clone());
+                    type_index.insert(
+                        key,
+                        TypeInfo {
+                            module: module_path.clone(),
+                            visibility: public,
+                            fields: HashMap::new(),
+                            methods: HashMap::new(),
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        local_type_maps.insert(module_path.clone(), local_types.clone());
+        module_type_namespaces.insert(module_path.clone(), local_types);
+    }
+
+    for (module_path, module) in modules {
+        for stmt in &module.ast.stmts {
+            let (inner, _) = strip_pub(stmt);
+            if let Stmt::Impl(impl_stmt) = inner {
+                let Some(type_key) = local_type_maps
+                    .get(module_path)
+                    .and_then(|types| types.get(&impl_stmt.name))
+                    .cloned()
+                else {
+                    continue;
+                };
+
+                let Some(type_info) = type_index.get_mut(&type_key) else {
+                    continue;
+                };
+
+                for method in &impl_stmt.methods {
+                    match method {
+                        Stmt::Fun(fun_stmt) => {
+                            type_info.methods.insert(
+                                fun_stmt.name.clone(),
+                                MethodInfo {
+                                    visibility: false,
+                                    params: fun_stmt
+                                        .params
+                                        .iter()
+                                        .map(|param| param.param_type.clone())
+                                        .collect(),
+                                    return_type: fun_stmt.return_type.clone(),
+                                },
+                            );
+                        }
+                        Stmt::Pub(pub_stmt) => {
+                            if let Stmt::Fun(fun_stmt) = pub_stmt.stmt.as_ref() {
+                                type_info.methods.insert(
+                                    fun_stmt.name.clone(),
+                                    MethodInfo {
+                                        visibility: true,
+                                        params: fun_stmt
+                                            .params
+                                            .iter()
+                                            .map(|param| param.param_type.clone())
+                                            .collect(),
+                                        return_type: fun_stmt.return_type.clone(),
+                                    },
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    for (module_path, module) in modules {
+        let namespace = module_type_namespaces
+            .entry(module_path.clone())
+            .or_default();
+
+        for stmt in &module.ast.stmts {
+            let (inner, _) = strip_pub(stmt);
+            if let Stmt::Use(use_stmt) = inner {
+                if let Some(type_key) = resolve_type_path(
+                    modules,
+                    module,
+                    entry_module,
+                    &use_stmt.path,
+                    &type_index,
+                    false,
+                ) {
+                    namespace.insert(use_binding_name(use_stmt), type_key);
+                }
+            }
+        }
+    }
+
+    for type_info in type_index.values() {
+        let Some(namespace) = module_type_namespaces.get(&type_info.module) else {
+            continue;
+        };
+
+        for (field_name, field_type) in &type_info.fields {
+            if type_to_value_type(field_type, namespace).is_none() {
+                errors.push(SemanticError::new(format!(
+                    "{}: Unknown field type {:?} for '{}.{}'",
+                    type_info.module.display(),
+                    field_type,
+                    type_info.module.display(),
+                    field_name
+                )));
+            }
+        }
+    }
+
+    (type_index, module_type_namespaces, errors)
+}
+
+fn validate_module_method_calls(
+    modules: &HashMap<PathBuf, LinkedModule>,
+    type_index: &HashMap<TypeKey, TypeInfo>,
+    module_type_namespaces: &HashMap<PathBuf, HashMap<String, TypeKey>>,
+) -> Vec<SemanticError> {
+    let mut errors = Vec::new();
+    let mut module_paths = modules.keys().cloned().collect::<Vec<_>>();
+    module_paths.sort();
+
+    for module_path in module_paths {
+        let Some(module) = modules.get(&module_path) else {
+            continue;
+        };
+        let Some(namespace) = module_type_namespaces.get(&module_path) else {
+            continue;
+        };
+
+        let mut resolver = MethodCallResolver::new(
+            module,
+            namespace.clone(),
+            type_index,
+            module_type_namespaces,
+        );
+        resolver.analyze_module();
+        errors.extend(resolver.errors);
+    }
+
+    errors
+}
+
+struct MethodCallResolver<'a> {
+    module: &'a LinkedModule,
+    module_namespace: HashMap<String, TypeKey>,
+    type_index: &'a HashMap<TypeKey, TypeInfo>,
+    module_type_namespaces: &'a HashMap<PathBuf, HashMap<String, TypeKey>>,
+    scopes: Vec<HashMap<String, ValueType>>,
+    current_impl_type: Option<TypeKey>,
+    errors: Vec<SemanticError>,
+}
+
+impl<'a> MethodCallResolver<'a> {
+    fn new(
+        module: &'a LinkedModule,
+        module_namespace: HashMap<String, TypeKey>,
+        type_index: &'a HashMap<TypeKey, TypeInfo>,
+        module_type_namespaces: &'a HashMap<PathBuf, HashMap<String, TypeKey>>,
+    ) -> Self {
+        Self {
+            module,
+            module_namespace,
+            type_index,
+            module_type_namespaces,
+            scopes: vec![HashMap::new()],
+            current_impl_type: None,
+            errors: Vec::new(),
+        }
+    }
+
+    fn analyze_module(&mut self) {
+        for stmt in &self.module.ast.stmts {
+            self.analyze_top_level_stmt(stmt);
+        }
+    }
+
+    fn analyze_top_level_stmt(&mut self, stmt: &Stmt) {
+        let (inner, _) = strip_pub(stmt);
+        match inner {
+            Stmt::Fun(fun_stmt) => self.analyze_fun(fun_stmt),
+            Stmt::Impl(impl_stmt) => {
+                let impl_type = self
+                    .module_namespace
+                    .get(&impl_stmt.name)
+                    .cloned()
+                    .or_else(|| {
+                        self.type_index.keys().find_map(|key| {
+                            if key.module == self.module.path && key.name == impl_stmt.name {
+                                Some(key.clone())
+                            } else {
+                                None
+                            }
+                        })
+                    });
+
+                for method in &impl_stmt.methods {
+                    let method_fun = match method {
+                        Stmt::Fun(fun_stmt) => Some(fun_stmt),
+                        Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                            Stmt::Fun(fun_stmt) => Some(fun_stmt),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+
+                    let Some(fun_stmt) = method_fun else {
+                        continue;
+                    };
+
+                    let previous_impl = self.current_impl_type.clone();
+                    self.current_impl_type = impl_type.clone();
+                    self.analyze_fun(fun_stmt);
+                    self.current_impl_type = previous_impl;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn analyze_fun(&mut self, fun_stmt: &FunStmt) {
+        self.push_scope();
+
+        if let Some(type_key) = &self.current_impl_type {
+            self.define_symbol("this", ValueType::User(type_key.clone()));
+        }
+
+        for param in &fun_stmt.params {
+            self.define_symbol(
+                &param.name,
+                self.resolve_declared_type(&param.param_type, &self.module.path),
+            );
+        }
+
+        self.analyze_stmt(fun_stmt.block.as_ref());
+
+        self.pop_scope();
+    }
+
+    fn analyze_stmt(&mut self, stmt: &Stmt) {
+        let (inner, _) = strip_pub(stmt);
+        match inner {
+            Stmt::Block(block) => {
+                self.push_scope();
+                for child in &block.stmts {
+                    self.analyze_stmt(child);
+                }
+                self.pop_scope();
+            }
+            Stmt::Var(var_stmt) => {
+                let declared = if matches!(var_stmt.var_type, Type::None) {
+                    ValueType::Unknown
+                } else {
+                    self.resolve_declared_type(&var_stmt.var_type, &self.module.path)
+                };
+                let inferred = self.analyze_expr(&var_stmt.assignment);
+                let final_ty = if matches!(declared, ValueType::Unknown) {
+                    inferred
+                } else {
+                    declared
+                };
+                self.define_symbol(&var_stmt.name, final_ty);
+            }
+            Stmt::Const(const_stmt) => {
+                let declared = if matches!(const_stmt.const_type, Type::None) {
+                    ValueType::Unknown
+                } else {
+                    self.resolve_declared_type(&const_stmt.const_type, &self.module.path)
+                };
+                let inferred = self.analyze_expr(&const_stmt.assignment);
+                let final_ty = if matches!(declared, ValueType::Unknown) {
+                    inferred
+                } else {
+                    declared
+                };
+                self.define_symbol(&const_stmt.name, final_ty);
+            }
+            Stmt::If(if_stmt) => {
+                self.analyze_expr(&if_stmt.condition);
+                self.analyze_stmt(if_stmt.then_block.as_ref());
+                self.analyze_stmt(if_stmt.else_block.as_ref());
+            }
+            Stmt::While(while_stmt) => {
+                self.analyze_expr(&while_stmt.condition);
+                self.analyze_stmt(while_stmt.body.as_ref());
+            }
+            Stmt::For(for_stmt) => {
+                self.analyze_expr(&for_stmt.iterator);
+                self.push_scope();
+                self.define_symbol(&for_stmt.item, ValueType::Unknown);
+                if let Some(index) = &for_stmt.index {
+                    self.define_symbol(index, ValueType::Num);
+                }
+                self.analyze_stmt(for_stmt.body.as_ref());
+                self.pop_scope();
+            }
+            Stmt::Match(match_stmt) => self.analyze_match(match_stmt),
+            Stmt::Return(return_stmt) => {
+                self.analyze_expr(&return_stmt.return_expr);
+            }
+            Stmt::Expr(expr_stmt) => {
+                self.analyze_expr(&expr_stmt.expr);
+            }
+            _ => {}
+        }
+    }
+
+    fn analyze_match(&mut self, match_stmt: &MatchStmt) {
+        let scrutinee_type = self.analyze_expr(&match_stmt.expr);
+        for arm in &match_stmt.arms {
+            self.push_scope();
+            self.bind_pattern(&arm.pattern, &scrutinee_type);
+            self.analyze_stmt(arm.body.as_ref());
+            self.pop_scope();
+        }
+    }
+
+    fn bind_pattern(&mut self, pattern: &Pattern, expected_type: &ValueType) {
+        match pattern {
+            Pattern::Identifier(name) => self.define_symbol(name, expected_type.clone()),
+            Pattern::Variant(_, nested) => {
+                for nested_pattern in nested {
+                    self.bind_pattern(nested_pattern, &ValueType::Unknown);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn analyze_expr(&mut self, expr: &Expr) -> ValueType {
+        match expr {
+            Expr::Literal(Literal::Num(_)) => ValueType::Num,
+            Expr::Literal(Literal::Char(_)) => ValueType::Char,
+            Expr::Literal(Literal::String(_)) => ValueType::String,
+            Expr::Literal(Literal::Bool(_)) => ValueType::Bool,
+            Expr::Literal(Literal::Identifier(name)) => self
+                .lookup_symbol(name)
+                .cloned()
+                .or_else(|| {
+                    self.module_namespace
+                        .get(name)
+                        .cloned()
+                        .map(ValueType::User)
+                })
+                .unwrap_or(ValueType::Unknown),
+            Expr::Literal(Literal::This) => self
+                .current_impl_type
+                .clone()
+                .map(ValueType::User)
+                .unwrap_or(ValueType::Unknown),
+            Expr::Unary(_, right) => self.analyze_expr(right),
+            Expr::Binary(left, _, right) => {
+                let _ = self.analyze_expr(left);
+                let _ = self.analyze_expr(right);
+                ValueType::Unknown
+            }
+            Expr::Assignment(left, right) => {
+                let right_type = self.analyze_expr(right);
+                if let Expr::Literal(Literal::Identifier(name)) = left.as_ref() {
+                    self.update_symbol(name, right_type.clone());
+                } else {
+                    self.analyze_expr(left);
+                }
+                right_type
+            }
+            Expr::Call(call) => self.analyze_call(call.callee.as_ref(), &call.arguments),
+            Expr::Mebmer(member) => {
+                let owner_type = self.analyze_expr(member.member.as_ref());
+                if let ValueType::User(type_key) = owner_type {
+                    if let Some(type_info) = self.type_index.get(&type_key) {
+                        if let Some(field_type) = type_info.fields.get(&member.property) {
+                            return self.resolve_declared_type(field_type, &type_key.module);
+                        }
+                    }
+                }
+                ValueType::Unknown
+            }
+            Expr::ComputedExpr(computed) => {
+                self.analyze_expr(computed.member.as_ref());
+                self.analyze_expr(computed.property.as_ref());
+                ValueType::Unknown
+            }
+            Expr::Array(array) => {
+                let mut item_type = ValueType::Unknown;
+                for item in &array.array {
+                    let ty = self.analyze_expr(item);
+                    if matches!(item_type, ValueType::Unknown) {
+                        item_type = ty;
+                    }
+                }
+                ValueType::Array(Box::new(item_type))
+            }
+            Expr::Empty => ValueType::Void,
+        }
+    }
+
+    fn analyze_call(&mut self, callee: &Expr, arguments: &[Expr]) -> ValueType {
+        let arg_types = arguments
+            .iter()
+            .map(|argument| self.analyze_expr(argument))
+            .collect::<Vec<_>>();
+
+        match callee {
+            Expr::Mebmer(member) => {
+                let receiver_type = self.analyze_expr(member.member.as_ref());
+                let ValueType::User(type_key) = receiver_type else {
+                    return ValueType::Unknown;
+                };
+
+                let Some(type_info) = self.type_index.get(&type_key) else {
+                    return ValueType::Unknown;
+                };
+
+                let Some(method_info) = type_info.methods.get(&member.property) else {
+                    self.error(format!(
+                        "Unknown method '{}.{}'",
+                        type_key.name, member.property
+                    ));
+                    return ValueType::Unknown;
+                };
+
+                if !type_info.visibility && self.module.path != type_key.module {
+                    self.error(format!(
+                        "Type '{}.{}' is private and cannot be referenced from '{}'",
+                        type_key.module.display(),
+                        type_key.name,
+                        self.module.path.display()
+                    ));
+                }
+
+                if !method_info.visibility && self.module.path != type_key.module {
+                    self.error(format!(
+                        "Method '{}.{}' is private and cannot be called from '{}'",
+                        type_key.name,
+                        member.property,
+                        self.module.path.display()
+                    ));
+                }
+
+                if method_info.params.len() != arg_types.len() {
+                    self.error(format!(
+                        "Method '{}.{}' expects {} args, got {}",
+                        type_key.name,
+                        member.property,
+                        method_info.params.len(),
+                        arg_types.len()
+                    ));
+                }
+
+                let method_namespace = self
+                    .module_type_namespaces
+                    .get(&type_key.module)
+                    .cloned()
+                    .unwrap_or_default();
+
+                for (index, (expected, actual)) in
+                    method_info.params.iter().zip(arg_types.iter()).enumerate()
+                {
+                    let expected_ty = type_to_value_type(expected, &method_namespace)
+                        .unwrap_or(ValueType::Unknown);
+                    if !value_type_assignable(&expected_ty, actual) {
+                        self.error(format!(
+                            "Argument {} for method '{}.{}' expected {:?}, got {:?}",
+                            index, type_key.name, member.property, expected_ty, actual
+                        ));
+                    }
+                }
+
+                type_to_value_type(&method_info.return_type, &method_namespace)
+                    .unwrap_or(ValueType::Unknown)
+            }
+            _ => {
+                self.analyze_expr(callee);
+                ValueType::Unknown
+            }
+        }
+    }
+
+    fn resolve_declared_type(&self, ty: &Type, module_path: &Path) -> ValueType {
+        let namespace = self
+            .module_type_namespaces
+            .get(module_path)
+            .cloned()
+            .unwrap_or_default();
+        type_to_value_type(ty, &namespace).unwrap_or(ValueType::Unknown)
+    }
+
+    fn define_symbol(&mut self, name: &str, ty: ValueType) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.to_string(), ty);
+        }
+    }
+
+    fn lookup_symbol(&self, name: &str) -> Option<&ValueType> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(ty) = scope.get(name) {
+                return Some(ty);
+            }
+        }
+        None
+    }
+
+    fn update_symbol(&mut self, name: &str, ty: ValueType) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(existing) = scope.get_mut(name) {
+                *existing = ty;
+                return;
+            }
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn error(&mut self, message: impl Into<String>) {
+        self.errors.push(SemanticError::new(format!(
+            "{}: {}",
+            self.module.path.display(),
+            message.into()
+        )));
+    }
+}
+
+fn value_type_assignable(expected: &ValueType, actual: &ValueType) -> bool {
+    if matches!(expected, ValueType::Unknown) || matches!(actual, ValueType::Unknown) {
+        return true;
+    }
+
+    match (expected, actual) {
+        (ValueType::Array(left), ValueType::Array(right)) => value_type_assignable(left, right),
+        (ValueType::User(left), ValueType::User(right)) => left == right,
+        _ => expected == actual,
+    }
+}
+
+fn type_to_value_type(ty: &Type, namespace: &HashMap<String, TypeKey>) -> Option<ValueType> {
+    match ty {
+        Type::Num => Some(ValueType::Num),
+        Type::Char => Some(ValueType::Char),
+        Type::Byte => Some(ValueType::Byte),
+        Type::String => Some(ValueType::String),
+        Type::Bool => Some(ValueType::Bool),
+        Type::Void => Some(ValueType::Void),
+        Type::Identifier(name) => namespace.get(name).cloned().map(ValueType::User),
+        Type::Array(inner) => type_to_value_type(inner, namespace)
+            .map(|resolved| ValueType::Array(Box::new(resolved))),
+        Type::None => Some(ValueType::Unknown),
+    }
+}
+
+fn resolve_type_path(
+    modules: &HashMap<PathBuf, LinkedModule>,
+    module: &LinkedModule,
+    entry_module: &Path,
+    path: &str,
+    type_index: &HashMap<TypeKey, TypeInfo>,
+    require_public: bool,
+) -> Option<TypeKey> {
+    let segments = path
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if segments.is_empty() {
+        return None;
+    }
+
+    let root = segments[0];
+    if matches!(root, "std" | "core") {
+        return None;
+    }
+
+    let mut current_module_path;
+    let mut segment_index = 1usize;
+
+    match root {
+        "crate" => {
+            current_module_path = entry_module.to_path_buf();
+        }
+        "self" => {
+            current_module_path = module.path.clone();
+        }
+        "super" => {
+            current_module_path = module.parent.clone()?;
+        }
+        _ => {
+            let root_item = module.items.get(root)?;
+            if root_item.kind != ItemKind::Module {
+                return None;
+            }
+            if require_public && !root_item.public {
+                return None;
+            }
+            current_module_path = root_item.target_module.clone()?;
+        }
+    }
+
+    while segment_index < segments.len() {
+        let segment = segments[segment_index];
+        let is_last = segment_index + 1 == segments.len();
+        let current_module = modules.get(&current_module_path)?;
+        let item = current_module.items.get(segment)?;
+
+        if require_public && !item.public {
+            return None;
+        }
+
+        if is_last {
+            if item.kind == ItemKind::Type {
+                let key = TypeKey {
+                    module: current_module_path.clone(),
+                    name: segment.to_string(),
+                };
+                if type_index.contains_key(&key) {
+                    return Some(key);
+                }
+            }
+            return None;
+        }
+
+        if item.kind != ItemKind::Module {
+            return None;
+        }
+        current_module_path = item.target_module.clone()?;
+        segment_index += 1;
+    }
+
+    None
+}
+
 fn collect_dependency_requests(ast: &BlockStmt) -> Vec<DependencyRequest> {
     let mut requests = Vec::new();
     for stmt in &ast.stmts {
@@ -584,21 +1324,21 @@ fn collect_module_items(
             }
             Stmt::Struct(struct_stmt) => {
                 items.entry(struct_stmt.name.clone()).or_insert(ItemInfo {
-                    kind: ItemKind::Symbol,
+                    kind: ItemKind::Type,
                     public,
                     target_module: None,
                 });
             }
             Stmt::Enum(enum_stmt) => {
                 items.entry(enum_stmt.name.clone()).or_insert(ItemInfo {
-                    kind: ItemKind::Symbol,
+                    kind: ItemKind::Type,
                     public,
                     target_module: None,
                 });
             }
             Stmt::Class(class_stmt) => {
                 items.entry(class_stmt.name.clone()).or_insert(ItemInfo {
-                    kind: ItemKind::Symbol,
+                    kind: ItemKind::Type,
                     public,
                     target_module: None,
                 });
@@ -655,11 +1395,29 @@ fn dedup_paths(paths: &mut Vec<PathBuf>) {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{
+        collections::HashMap,
+        path::{Path, PathBuf},
+    };
 
-    use crate::ast::{ImportStmt, Stmt, UseStmt};
+    use crate::ast::{BlockStmt, ImportStmt, ModStmt, PubStmt, Stmt, StructStmt, UseStmt};
 
-    use super::{collect_dependency_requests, import_binding_name, use_binding_name};
+    use super::{
+        collect_dependency_requests, collect_module_items, import_binding_name, resolve_type_path,
+        type_to_value_type, use_binding_name, value_type_assignable, ItemInfo, ItemKind,
+        LinkedModule, MethodInfo, ModuleBinding, TypeInfo, TypeKey, ValueType,
+    };
+
+    fn empty_module(path: &str) -> LinkedModule {
+        LinkedModule {
+            path: PathBuf::from(path),
+            ast: BlockStmt { stmts: vec![] },
+            parent: None,
+            bindings: HashMap::new(),
+            items: HashMap::new(),
+            uses: vec![],
+        }
+    }
 
     #[test]
     fn import_binding_name_prefers_alias() {
@@ -708,5 +1466,205 @@ mod tests {
         let sys = by_name.get("Sys").expect("Sys import should exist");
         assert!(!sys.is_mod_decl);
         assert_eq!(sys.specifier, "../system.kek");
+    }
+
+    #[test]
+    fn value_type_assignable_handles_user_and_array_types() {
+        let point_key = TypeKey {
+            module: PathBuf::from("/tmp/a.kek"),
+            name: "Point".to_string(),
+        };
+        let point_key_same = TypeKey {
+            module: PathBuf::from("/tmp/a.kek"),
+            name: "Point".to_string(),
+        };
+        let other_key = TypeKey {
+            module: PathBuf::from("/tmp/b.kek"),
+            name: "Point".to_string(),
+        };
+
+        assert!(value_type_assignable(
+            &ValueType::User(point_key.clone()),
+            &ValueType::User(point_key_same)
+        ));
+        assert!(!value_type_assignable(
+            &ValueType::User(point_key.clone()),
+            &ValueType::User(other_key)
+        ));
+        assert!(value_type_assignable(
+            &ValueType::Array(Box::new(ValueType::Num)),
+            &ValueType::Array(Box::new(ValueType::Num))
+        ));
+        assert!(!value_type_assignable(
+            &ValueType::Array(Box::new(ValueType::Num)),
+            &ValueType::Array(Box::new(ValueType::Bool))
+        ));
+        assert!(value_type_assignable(&ValueType::Unknown, &ValueType::Num));
+        assert!(value_type_assignable(&ValueType::Num, &ValueType::Unknown));
+    }
+
+    #[test]
+    fn type_to_value_type_resolves_user_types_from_namespace() {
+        let user_key = TypeKey {
+            module: PathBuf::from("/tmp/types.kek"),
+            name: "User".to_string(),
+        };
+        let mut namespace = HashMap::new();
+        namespace.insert("User".to_string(), user_key.clone());
+
+        let resolved = type_to_value_type(
+            &crate::ast::Type::Identifier("User".to_string()),
+            &namespace,
+        );
+        assert_eq!(resolved, Some(ValueType::User(user_key)));
+
+        let missing = type_to_value_type(
+            &crate::ast::Type::Identifier("Missing".to_string()),
+            &namespace,
+        );
+        assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn resolve_type_path_resolves_public_type_through_module_binding() {
+        let root_path = PathBuf::from("/tmp/root.kek");
+        let util_path = PathBuf::from("/tmp/util.kek");
+        let type_key = TypeKey {
+            module: util_path.clone(),
+            name: "Point".to_string(),
+        };
+
+        let mut root_module = empty_module("/tmp/root.kek");
+        root_module.items.insert(
+            "util".to_string(),
+            ItemInfo {
+                kind: ItemKind::Module,
+                public: true,
+                target_module: Some(util_path.clone()),
+            },
+        );
+
+        let mut util_module = empty_module("/tmp/util.kek");
+        util_module.items.insert(
+            "Point".to_string(),
+            ItemInfo {
+                kind: ItemKind::Type,
+                public: true,
+                target_module: None,
+            },
+        );
+
+        let mut modules = HashMap::new();
+        modules.insert(root_path.clone(), root_module.clone());
+        modules.insert(util_path.clone(), util_module);
+
+        let mut type_index = HashMap::new();
+        type_index.insert(
+            type_key.clone(),
+            TypeInfo {
+                module: util_path.clone(),
+                visibility: true,
+                fields: HashMap::new(),
+                methods: HashMap::<String, MethodInfo>::new(),
+            },
+        );
+
+        let resolved = resolve_type_path(
+            &modules,
+            &root_module,
+            Path::new("/tmp/root.kek"),
+            "util::Point",
+            &type_index,
+            true,
+        );
+
+        assert_eq!(resolved, Some(type_key));
+    }
+
+    #[test]
+    fn resolve_type_path_rejects_private_type_when_public_required() {
+        let root_path = PathBuf::from("/tmp/root.kek");
+        let util_path = PathBuf::from("/tmp/util.kek");
+        let type_key = TypeKey {
+            module: util_path.clone(),
+            name: "Point".to_string(),
+        };
+
+        let mut root_module = empty_module("/tmp/root.kek");
+        root_module.items.insert(
+            "util".to_string(),
+            ItemInfo {
+                kind: ItemKind::Module,
+                public: true,
+                target_module: Some(util_path.clone()),
+            },
+        );
+
+        let mut util_module = empty_module("/tmp/util.kek");
+        util_module.items.insert(
+            "Point".to_string(),
+            ItemInfo {
+                kind: ItemKind::Type,
+                public: false,
+                target_module: None,
+            },
+        );
+
+        let mut modules = HashMap::new();
+        modules.insert(root_path.clone(), root_module.clone());
+        modules.insert(util_path.clone(), util_module);
+
+        let mut type_index = HashMap::new();
+        type_index.insert(
+            type_key,
+            TypeInfo {
+                module: util_path.clone(),
+                visibility: false,
+                fields: HashMap::new(),
+                methods: HashMap::<String, MethodInfo>::new(),
+            },
+        );
+
+        let resolved = resolve_type_path(
+            &modules,
+            &root_module,
+            Path::new("/tmp/root.kek"),
+            "util::Point",
+            &type_index,
+            true,
+        );
+
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn collect_module_items_marks_structs_as_type_items() {
+        let ast = BlockStmt {
+            stmts: vec![
+                Stmt::Mod(ModStmt {
+                    name: "util".to_string(),
+                }),
+                Stmt::Pub(PubStmt {
+                    stmt: Box::new(Stmt::Struct(StructStmt {
+                        name: "Point".to_string(),
+                        fields: vec![],
+                    })),
+                }),
+            ],
+        };
+
+        let mut bindings = HashMap::new();
+        bindings.insert(
+            "util".to_string(),
+            ModuleBinding {
+                target: PathBuf::from("/tmp/util.kek"),
+                from_mod_decl: true,
+            },
+        );
+
+        let items = collect_module_items(&ast, &bindings);
+        let point = items.get("Point").expect("Point item should be present");
+        assert_eq!(point.kind, ItemKind::Type);
+        assert!(point.public);
     }
 }

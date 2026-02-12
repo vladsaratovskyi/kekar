@@ -415,7 +415,7 @@ impl Emitter {
                     .map(|arg| self.expr_to_js(arg))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("{}({})", call.method_name, args)
+                format!("{}({})", self.expr_to_js(call.callee.as_ref()), args)
             }
             Expr::Mebmer(member) => {
                 format!("{}.{}", self.expr_to_js(&member.member), member.property)

@@ -291,6 +291,76 @@ fun main() -> Num {
 }
 
 #[test]
+fn sema_accepts_impl_method_call_on_typed_receiver() {
+    let source = r#"
+struct Point {
+    value: Num;
+}
+
+impl Point {
+    fun get() -> Num {
+        return this.value;
+    }
+}
+
+fun main() -> Num {
+    var p: Point;
+    return p.get();
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}
+
+#[test]
+fn sema_rejects_impl_method_call_argument_type_mismatch() {
+    let source = r#"
+struct Point {
+    value: Num;
+}
+
+impl Point {
+    fun set(v: Num) -> Num {
+        return v;
+    }
+}
+
+fun main() -> Num {
+    var p: Point;
+    return p.set(true);
+}
+"#;
+
+    assert_has_error(
+        source,
+        "Argument 0 for method 'Point.set' expected Num, got Bool",
+    );
+}
+
+#[test]
+fn sema_rejects_unknown_impl_method_call() {
+    let source = r#"
+struct Point {
+    value: Num;
+}
+
+impl Point {
+    fun get() -> Num {
+        return this.value;
+    }
+}
+
+fun main() -> Num {
+    var p: Point;
+    return p.missing();
+}
+"#;
+
+    assert_has_error(source, "Unknown method 'Point.missing'");
+}
+
+#[test]
 fn sema_rejects_local_pub_declaration() {
     let source = r#"
 fun main() -> Num {

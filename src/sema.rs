@@ -33,6 +33,12 @@ struct FunctionSig {
     return_type: Type,
 }
 
+#[derive(Debug, Clone)]
+struct ImplMethodSig {
+    visibility: Visibility,
+    sig: FunctionSig,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Visibility {
     Public,
@@ -84,7 +90,7 @@ pub struct SemanticAnalyzer {
     imports: HashMap<String, ImportBinding>,
     uses: HashMap<String, UseBinding>,
     type_defs: HashMap<String, TypeDef>,
-    impl_methods: HashMap<String, HashMap<String, Visibility>>,
+    impl_methods: HashMap<String, HashMap<String, ImplMethodSig>>,
     current_return_type: Option<Type>,
     current_impl_type: Option<String>,
     loop_depth: usize,
@@ -469,7 +475,20 @@ impl SemanticAnalyzer {
                         .impl_methods
                         .entry(impl_stmt.name.clone())
                         .or_default()
-                        .insert(fun_stmt.name.clone(), Visibility::Private)
+                        .insert(
+                            fun_stmt.name.clone(),
+                            ImplMethodSig {
+                                visibility: Visibility::Private,
+                                sig: FunctionSig {
+                                    params: fun_stmt
+                                        .params
+                                        .iter()
+                                        .map(|param| param.param_type.clone())
+                                        .collect(),
+                                    return_type: fun_stmt.return_type.clone(),
+                                },
+                            },
+                        )
                         .is_some();
                     if duplicate {
                         self.error(format!(
@@ -490,7 +509,20 @@ impl SemanticAnalyzer {
                             .impl_methods
                             .entry(impl_stmt.name.clone())
                             .or_default()
-                            .insert(fun_stmt.name.clone(), Visibility::Public)
+                            .insert(
+                                fun_stmt.name.clone(),
+                                ImplMethodSig {
+                                    visibility: Visibility::Public,
+                                    sig: FunctionSig {
+                                        params: fun_stmt
+                                            .params
+                                            .iter()
+                                            .map(|param| param.param_type.clone())
+                                            .collect(),
+                                        return_type: fun_stmt.return_type.clone(),
+                                    },
+                                },
+                            )
                             .is_some();
                         if duplicate {
                             self.error(format!(
@@ -993,31 +1025,98 @@ impl SemanticAnalyzer {
                     arg_types.push(self.analyze_expr(arg));
                 }
 
-                if let Some(sig) = self.functions.get(&call.method_name).cloned() {
-                    if sig.params.len() != arg_types.len() {
-                        self.error(format!(
-                            "Function '{}' expects {} args, got {}",
-                            call.method_name,
-                            sig.params.len(),
-                            arg_types.len()
-                        ));
-                    }
+                match call.callee.as_ref() {
+                    Expr::Literal(Literal::Identifier(name)) => {
+                        if let Some(sig) = self.functions.get(name).cloned() {
+                            if sig.params.len() != arg_types.len() {
+                                self.error(format!(
+                                    "Function '{}' expects {} args, got {}",
+                                    name,
+                                    sig.params.len(),
+                                    arg_types.len()
+                                ));
+                            }
 
-                    for (index, (expected, actual)) in
-                        sig.params.iter().zip(arg_types.iter()).enumerate()
-                    {
-                        if !is_assignable(expected, actual) {
-                            self.error(format!(
-                                "Argument {} for '{}' expected {:?}, got {:?}",
-                                index, call.method_name, expected, actual
-                            ));
+                            for (index, (expected, actual)) in
+                                sig.params.iter().zip(arg_types.iter()).enumerate()
+                            {
+                                if !is_assignable(expected, actual) {
+                                    self.error(format!(
+                                        "Argument {} for '{}' expected {:?}, got {:?}",
+                                        index, name, expected, actual
+                                    ));
+                                }
+                            }
+
+                            sig.return_type
+                        } else {
+                            self.error(format!("Unknown function '{}'", name));
+                            Type::None
                         }
                     }
+                    Expr::Mebmer(member) => {
+                        let owner_ty = self.analyze_expr(member.member.as_ref());
+                        match owner_ty {
+                            Type::Identifier(type_name) => {
+                                let method = self
+                                    .impl_methods
+                                    .get(&type_name)
+                                    .and_then(|methods| methods.get(&member.property))
+                                    .cloned();
 
-                    sig.return_type
-                } else {
-                    self.error(format!("Unknown function '{}'", call.method_name));
-                    Type::None
+                                if let Some(method_sig) = method {
+                                    let _method_visibility = method_sig.visibility;
+                                    if method_sig.sig.params.len() != arg_types.len() {
+                                        self.error(format!(
+                                            "Method '{}.{}' expects {} args, got {}",
+                                            type_name,
+                                            member.property,
+                                            method_sig.sig.params.len(),
+                                            arg_types.len()
+                                        ));
+                                    }
+
+                                    for (index, (expected, actual)) in method_sig
+                                        .sig
+                                        .params
+                                        .iter()
+                                        .zip(arg_types.iter())
+                                        .enumerate()
+                                    {
+                                        if !is_assignable(expected, actual) {
+                                            self.error(format!(
+                                                "Argument {} for method '{}.{}' expected {:?}, got {:?}",
+                                                index, type_name, member.property, expected, actual
+                                            ));
+                                        }
+                                    }
+
+                                    method_sig.sig.return_type
+                                } else {
+                                    if self.type_defs.contains_key(&type_name) {
+                                        self.error(format!(
+                                            "Unknown method '{}.{}'",
+                                            type_name, member.property
+                                        ));
+                                    }
+                                    Type::None
+                                }
+                            }
+                            Type::None => Type::None,
+                            other => {
+                                self.error(format!(
+                                    "Method call requires user type receiver, got {:?}",
+                                    other
+                                ));
+                                Type::None
+                            }
+                        }
+                    }
+                    _ => {
+                        self.analyze_expr(call.callee.as_ref());
+                        self.error("Unsupported call target");
+                        Type::None
+                    }
                 }
             }
             Expr::Mebmer(member) => {
@@ -1389,7 +1488,7 @@ mod tests {
         analyzer.collect_function_signatures(&program);
 
         analyzer.analyze_expr(&Expr::Call(crate::ast::CallExpr {
-            method_name: "sum".to_string(),
+            callee: Box::new(Expr::Literal(Literal::Identifier("sum".to_string()))),
             arguments: vec![Expr::Literal(Literal::Num(1.0))],
         }));
 

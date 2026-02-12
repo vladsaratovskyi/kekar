@@ -433,13 +433,8 @@ impl Parser {
 
         self.expect(&Token::RightParen);
 
-        let name = match left {
-            Expr::Literal(Literal::Identifier(v)) => v,
-            _ => panic!("Can not extract value from identifier"),
-        };
-
         Expr::Call(CallExpr {
-            method_name: name,
+            callee: Box::new(left),
             arguments,
         })
     }
@@ -1499,11 +1494,36 @@ mod tests {
             parser.parse_fun_call_expr(Expr::Literal(Literal::Identifier("call".to_string())));
 
         let expected = Expr::Call(CallExpr {
-            method_name: "call".to_string(),
+            callee: Box::new(Expr::Literal(Literal::Identifier("call".to_string()))),
             arguments: vec![
                 Expr::Literal(Literal::Identifier("arg_one".to_string())),
                 Expr::Literal(Literal::Identifier("arg_two".to_string())),
             ],
+        });
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn parse_member_call_expr() {
+        let tokens = vec![
+            Token::LeftParen,
+            Token::Identifier("arg".to_string()),
+            Token::RightParen,
+            Token::Semicolon,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let receiver = Expr::Mebmer(MemberExpr {
+            member: Box::new(Expr::Literal(Literal::Identifier("point".to_string()))),
+            property: "value".to_string(),
+        });
+        let res = parser.parse_fun_call_expr(receiver.clone());
+
+        let expected = Expr::Call(CallExpr {
+            callee: Box::new(receiver),
+            arguments: vec![Expr::Literal(Literal::Identifier("arg".to_string()))],
         });
 
         assert_eq!(res, expected);

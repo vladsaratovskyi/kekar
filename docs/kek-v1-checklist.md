@@ -46,7 +46,7 @@ Last updated for commit: `working tree (uncommitted)`
 - [x] Semantic guardrails exist for module/use/import declarations, user-defined types, impl methods, match coverage, and `pub` visibility
 - [x] Core frontend pipeline (lexer/parser/sema) supports v1 declaration surface needed by a compiler frontend codebase
 - [x] Real multi-file module loading and path-based symbol resolution (filesystem-backed, cross-file linking)
-- [ ] Namespace-aware method call resolution for impl methods and visibility across module boundaries
+- [x] Namespace-aware method call resolution for impl methods and visibility across module boundaries
 - [ ] Full user-type semantics needed for bootstrap-scale code (constructor/value typing strategy, richer class/enum runtime model)
 - [ ] Compatibility diagnostics policy implemented in compiler output (warnings + migration hints)
 - [x] Backend lowering parity for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable JS/ASM output

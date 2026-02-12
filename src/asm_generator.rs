@@ -594,7 +594,17 @@ impl AsmGenerator {
                         lines.push("    ; call argument exceeds register support".to_string());
                     }
                 }
-                lines.push(format!("    call {}", call.method_name));
+                match call.callee.as_ref() {
+                    Expr::Literal(Literal::Identifier(name)) => {
+                        lines.push(format!("    call {}", name));
+                    }
+                    _ => {
+                        lines.push(
+                            "    ; dynamic/member call unsupported in asm backend".to_string(),
+                        );
+                        lines.push("    mov rax, 0".to_string());
+                    }
+                }
             }
             Expr::Mebmer(_) => {
                 lines.push("    ; member access unsupported in asm backend".to_string());
@@ -740,6 +750,7 @@ fn collect_expr_locals(expr: &Expr, locals: &mut BTreeSet<String>) {
             collect_expr_locals(right, locals);
         }
         Expr::Call(call) => {
+            collect_expr_locals(call.callee.as_ref(), locals);
             for arg in &call.arguments {
                 collect_expr_locals(arg, locals);
             }

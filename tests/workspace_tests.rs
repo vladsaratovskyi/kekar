@@ -189,3 +189,84 @@ pub struct Thing {
 
     fs::remove_dir_all(root).expect("should clean test workspace");
 }
+
+#[test]
+fn workspace_accepts_public_impl_method_call_across_modules() {
+    let root = temp_workspace("method-pub-cross-module");
+    let entry = root.join("main.kek");
+    let util = root.join("util.kek");
+
+    write_file(
+        &entry,
+        r#"
+mod util;
+use util::Point;
+
+fun main() -> Num {
+    var p: Point;
+    return p.value();
+}
+"#,
+    );
+
+    write_file(
+        &util,
+        r#"
+pub struct Point {
+    n: Num;
+}
+
+impl Point {
+    pub fun value() -> Num {
+        return this.n;
+    }
+}
+"#,
+    );
+
+    let result = analyze_workspace(&entry);
+    assert!(result.is_ok(), "Expected no workspace errors: {result:?}");
+
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}
+
+#[test]
+fn workspace_rejects_private_impl_method_call_across_modules() {
+    let root = temp_workspace("method-private-cross-module");
+    let entry = root.join("main.kek");
+    let util = root.join("util.kek");
+
+    write_file(
+        &entry,
+        r#"
+mod util;
+use util::Point;
+
+fun main() -> Num {
+    var p: Point;
+    return p.hidden();
+}
+"#,
+    );
+
+    write_file(
+        &util,
+        r#"
+pub struct Point {
+    n: Num;
+}
+
+impl Point {
+    fun hidden() -> Num {
+        return this.n;
+    }
+}
+"#,
+    );
+
+    assert_has_error(
+        &entry,
+        "Method 'Point.hidden' is private and cannot be called",
+    );
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}

@@ -177,7 +177,7 @@ pub struct ClassStmt {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct CallExpr {
-    pub method_name: String,
+    pub callee: Box<Expr>,
     pub arguments: Vec<Expr>,
 }
 
