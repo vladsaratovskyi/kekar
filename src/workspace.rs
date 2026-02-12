@@ -591,14 +591,63 @@ fn build_type_index(
                         module: module_path.clone(),
                         name: class_stmt.name.clone(),
                     };
+                    let mut fields = HashMap::new();
+                    let mut methods = HashMap::new();
+                    if let Stmt::Block(block) = class_stmt.block.as_ref() {
+                        for member in &block.stmts {
+                            match member {
+                                Stmt::Var(var_stmt) => {
+                                    fields.insert(var_stmt.name.clone(), var_stmt.var_type.clone());
+                                }
+                                Stmt::Fun(fun_stmt) => {
+                                    methods.insert(
+                                        fun_stmt.name.clone(),
+                                        MethodInfo {
+                                            visibility: false,
+                                            params: fun_stmt
+                                                .params
+                                                .iter()
+                                                .map(|param| param.param_type.clone())
+                                                .collect(),
+                                            return_type: fun_stmt.return_type.clone(),
+                                        },
+                                    );
+                                }
+                                Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                                    Stmt::Var(var_stmt) => {
+                                        fields.insert(
+                                            var_stmt.name.clone(),
+                                            var_stmt.var_type.clone(),
+                                        );
+                                    }
+                                    Stmt::Fun(fun_stmt) => {
+                                        methods.insert(
+                                            fun_stmt.name.clone(),
+                                            MethodInfo {
+                                                visibility: true,
+                                                params: fun_stmt
+                                                    .params
+                                                    .iter()
+                                                    .map(|param| param.param_type.clone())
+                                                    .collect(),
+                                                return_type: fun_stmt.return_type.clone(),
+                                            },
+                                        );
+                                    }
+                                    _ => {}
+                                },
+                                _ => {}
+                            }
+                        }
+                    }
                     local_types.insert(class_stmt.name.clone(), key.clone());
                     type_index.insert(
                         key,
                         TypeInfo {
                             module: module_path.clone(),
                             visibility: public,
-                            fields: HashMap::new(),
-                            methods: HashMap::new(),
+                            fields,
+                            methods,
                         },
                     );
                 }

@@ -2,8 +2,9 @@ use std::collections::HashSet;
 
 use crate::{
     ast::{
-        BlockStmt, ConstStmt, EnumStmt, Expr, ForStmt, FunStmt, IfStmt, ImplStmt, ImportStmt,
-        Literal, MatchStmt, ModStmt, Pattern, Stmt, StructStmt, UseStmt, VarStmt, WhileStmt,
+        BlockStmt, ClassStmt, ConstStmt, EnumStmt, Expr, ForStmt, FunStmt, IfStmt, ImplStmt,
+        ImportStmt, Literal, MatchStmt, ModStmt, Pattern, Stmt, StructStmt, UseStmt, VarStmt,
+        WhileStmt,
     },
     lexer::Token,
 };
@@ -65,19 +66,7 @@ impl Emitter {
             Stmt::Struct(struct_stmt) => self.emit_struct(struct_stmt),
             Stmt::Enum(enum_stmt) => self.emit_enum(enum_stmt),
             Stmt::Impl(impl_stmt) => self.emit_impl(impl_stmt),
-            Stmt::Class(class_stmt) => {
-                self.line(&format!("class {} {{", class_stmt.name));
-                self.indent += 1;
-
-                if let Stmt::Block(block) = class_stmt.block.as_ref() {
-                    for member in &block.stmts {
-                        self.emit_stmt(member, true);
-                    }
-                }
-
-                self.indent -= 1;
-                self.line("}");
-            }
+            Stmt::Class(class_stmt) => self.emit_class(class_stmt),
             Stmt::Fun(fun_stmt) => self.emit_fun(fun_stmt, in_class),
             Stmt::Var(var_stmt) => self.emit_var(var_stmt, in_class),
             Stmt::Const(const_stmt) => self.emit_const(const_stmt),
@@ -184,6 +173,58 @@ impl Emitter {
         for alias in aliases {
             self.line(&alias);
         }
+    }
+
+    fn emit_class(&mut self, class_stmt: &ClassStmt) {
+        self.line(&format!("class {} {{", class_stmt.name));
+        self.indent += 1;
+
+        let mut fields = Vec::new();
+        if let Stmt::Block(block) = class_stmt.block.as_ref() {
+            for member in &block.stmts {
+                match member {
+                    Stmt::Var(var_stmt) => fields.push(var_stmt.clone()),
+                    Stmt::Pub(pub_stmt) => {
+                        if let Stmt::Var(var_stmt) = pub_stmt.stmt.as_ref() {
+                            fields.push(var_stmt.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if !fields.is_empty() {
+            let params = fields
+                .iter()
+                .map(|field| field.name.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.line(&format!("constructor({}) {{", params));
+            self.indent += 1;
+            for field in &fields {
+                if matches!(field.assignment, Expr::Empty) {
+                    self.line(&format!("this.{0} = {0};", field.name));
+                } else {
+                    let default_value = self.expr_to_js(&field.assignment);
+                    self.line(&format!(
+                        "this.{0} = ({0} !== undefined) ? {0} : ({1});",
+                        field.name, default_value
+                    ));
+                }
+            }
+            self.indent -= 1;
+            self.line("}");
+        }
+
+        if let Stmt::Block(block) = class_stmt.block.as_ref() {
+            for member in &block.stmts {
+                self.emit_stmt(member, true);
+            }
+        }
+
+        self.indent -= 1;
+        self.line("}");
     }
 
     fn emit_impl(&mut self, impl_stmt: &ImplStmt) {
@@ -664,6 +705,54 @@ mod tests {
         emitter.emit_var(&var_stmt, true);
 
         assert_eq!(emitter.finish(), "let count;\ncount;\n");
+    }
+
+    #[test]
+    fn emit_class_adds_constructor_runtime_model_for_fields() {
+        let mut emitter = Emitter::new();
+
+        emitter.emit_stmt(
+            &Stmt::Class(ClassStmt {
+                name: "Counter".to_string(),
+                block: Box::new(Stmt::Block(BlockStmt {
+                    stmts: vec![
+                        Stmt::Var(VarStmt {
+                            name: "value".to_string(),
+                            assignment: Expr::Empty,
+                            var_type: Type::Num,
+                        }),
+                        Stmt::Var(VarStmt {
+                            name: "enabled".to_string(),
+                            assignment: Expr::Literal(Literal::Bool(true)),
+                            var_type: Type::Bool,
+                        }),
+                        Stmt::Fun(FunStmt {
+                            name: "get".to_string(),
+                            return_type: Type::Num,
+                            params: vec![],
+                            block: Box::new(Stmt::Block(BlockStmt {
+                                stmts: vec![Stmt::Return(ReturnStmt {
+                                    return_expr: Expr::Mebmer(MemberExpr {
+                                        member: Box::new(Expr::Literal(Literal::This)),
+                                        property: "value".to_string(),
+                                    }),
+                                })],
+                            })),
+                        }),
+                    ],
+                })),
+            }),
+            false,
+        );
+
+        let output = emitter.finish();
+        assert!(output.contains("class Counter {"));
+        assert!(output.contains("constructor(value, enabled) {"));
+        assert!(output.contains("this.value = value;"));
+        assert!(output.contains("this.enabled = (enabled !== undefined) ? enabled : (true);"));
+        assert!(output.contains("value;"));
+        assert!(output.contains("enabled = true;"));
+        assert!(output.contains("get() {"));
     }
 
     #[test]

@@ -651,3 +651,146 @@ fun main() -> Num {
     let result = analyze_source(source);
     assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
 }
+
+#[test]
+fn sema_accepts_struct_constructor_and_field_access() {
+    let source = r#"
+struct Point {
+    x: Num;
+    y: Num;
+}
+
+fun main() -> Num {
+    var p: Point = Point(1, 2);
+    return p.x;
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}
+
+#[test]
+fn sema_rejects_struct_constructor_arity_mismatch() {
+    let source = r#"
+struct Point {
+    x: Num;
+    y: Num;
+}
+
+fun main() -> Num {
+    var p: Point = Point(1);
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Struct 'Point' constructor expects 2 args, got 1");
+}
+
+#[test]
+fn sema_rejects_struct_constructor_argument_type_mismatch() {
+    let source = r#"
+struct Point {
+    x: Num;
+    y: Num;
+}
+
+fun main() -> Num {
+    var p: Point = Point(1, true);
+    return 0;
+}
+"#;
+
+    assert_has_error(
+        source,
+        "Struct 'Point' constructor argument 1 expected Num, got Bool",
+    );
+}
+
+#[test]
+fn sema_accepts_enum_variant_constructor_call() {
+    let source = r#"
+enum Maybe {
+    Some(Num),
+    Empty
+}
+
+fun unwrap(x: Maybe) -> Num {
+    match x {
+        Some(v) => { return v; },
+        Empty() => { return 0; }
+    }
+    return 0;
+}
+
+fun main() -> Num {
+    return unwrap(Some(7));
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}
+
+#[test]
+fn sema_rejects_enum_variant_constructor_argument_type_mismatch() {
+    let source = r#"
+enum Maybe {
+    Some(Num),
+    Empty
+}
+
+fun main() -> Num {
+    var x: Maybe = Some(true);
+    return 0;
+}
+"#;
+
+    assert_has_error(
+        source,
+        "Enum variant 'Some' constructor argument 0 expected Num, got Bool",
+    );
+}
+
+#[test]
+fn sema_accepts_class_constructor_via_init_signature() {
+    let source = r#"
+class Counter {
+    var value: Num;
+
+    fun init(start: Num) {
+        this.value = start;
+    }
+
+    fun get() -> Num {
+        return this.value;
+    }
+}
+
+fun main() -> Num {
+    var c: Counter = Counter(2);
+    return c.get();
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}
+
+#[test]
+fn sema_rejects_class_field_without_explicit_type() {
+    let source = r#"
+class Bad {
+    var value;
+}
+
+fun main() -> Num {
+    return 0;
+}
+"#;
+
+    assert_has_error(
+        source,
+        "Class field 'Bad.value' must declare a concrete type",
+    );
+}

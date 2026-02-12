@@ -60,6 +60,7 @@ struct UseBinding {
 #[derive(Debug, Clone)]
 struct StructDef {
     visibility: Visibility,
+    field_order: Vec<(String, Type)>,
     fields: HashMap<String, Type>,
 }
 
@@ -72,6 +73,10 @@ struct EnumDef {
 #[derive(Debug, Clone)]
 struct ClassDef {
     visibility: Visibility,
+    field_order: Vec<(String, Type)>,
+    fields: HashMap<String, Type>,
+    methods: HashMap<String, ImplMethodSig>,
+    init_sig: Option<FunctionSig>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +95,7 @@ pub struct SemanticAnalyzer {
     imports: HashMap<String, ImportBinding>,
     uses: HashMap<String, UseBinding>,
     type_defs: HashMap<String, TypeDef>,
+    enum_variant_ctors: HashMap<String, (String, Vec<Type>)>,
     impl_methods: HashMap<String, HashMap<String, ImplMethodSig>>,
     current_return_type: Option<Type>,
     current_impl_type: Option<String>,
@@ -107,6 +113,7 @@ impl SemanticAnalyzer {
             imports: HashMap::new(),
             uses: HashMap::new(),
             type_defs: HashMap::new(),
+            enum_variant_ctors: HashMap::new(),
             impl_methods: HashMap::new(),
             current_return_type: None,
             current_impl_type: None,
@@ -219,6 +226,7 @@ impl SemanticAnalyzer {
             Stmt::Mod(_) | Stmt::Use(_) | Stmt::Import(_) => {}
             Stmt::Struct(struct_stmt) => self.analyze_struct_stmt(struct_stmt),
             Stmt::Enum(enum_stmt) => self.analyze_enum_stmt(enum_stmt),
+            Stmt::Class(class_stmt) => self.analyze_class_stmt(class_stmt),
             Stmt::Impl(impl_stmt) => self.analyze_impl_stmt(impl_stmt),
             _ => self.analyze_stmt(stmt),
         }
@@ -276,15 +284,7 @@ impl SemanticAnalyzer {
                 }
             }
             Stmt::Fun(fun_stmt) => self.analyze_fun_stmt(fun_stmt),
-            Stmt::Class(class_stmt) => {
-                if let Stmt::Block(block) = class_stmt.block.as_ref() {
-                    self.push_scope();
-                    for member in &block.stmts {
-                        self.analyze_stmt(member);
-                    }
-                    self.pop_scope();
-                }
-            }
+            Stmt::Class(_) => self.error("'class' is only allowed at top level"),
             Stmt::Return(return_stmt) => {
                 let expected = self.current_return_type.clone();
                 match expected {
@@ -392,6 +392,7 @@ impl SemanticAnalyzer {
         }
 
         let mut fields = HashMap::new();
+        let mut field_order = Vec::new();
         for field in &struct_stmt.fields {
             if fields.contains_key(&field.name) {
                 self.error(format!(
@@ -401,11 +402,16 @@ impl SemanticAnalyzer {
                 continue;
             }
             fields.insert(field.name.clone(), field.field_type.clone());
+            field_order.push((field.name.clone(), field.field_type.clone()));
         }
 
         self.type_defs.insert(
             struct_stmt.name.clone(),
-            TypeDef::Struct(StructDef { visibility, fields }),
+            TypeDef::Struct(StructDef {
+                visibility,
+                field_order,
+                fields,
+            }),
         );
     }
 
@@ -425,6 +431,18 @@ impl SemanticAnalyzer {
                 continue;
             }
             variants.insert(variant.name.clone(), variant.arguments.clone());
+
+            if self.enum_variant_ctors.contains_key(&variant.name) {
+                self.error(format!(
+                    "Duplicate enum variant constructor '{}'",
+                    variant.name
+                ));
+            } else {
+                self.enum_variant_ctors.insert(
+                    variant.name.clone(),
+                    (enum_stmt.name.clone(), variant.arguments.clone()),
+                );
+            }
         }
 
         self.type_defs.insert(
@@ -442,9 +460,137 @@ impl SemanticAnalyzer {
             return;
         }
 
+        let mut fields = HashMap::new();
+        let mut field_order = Vec::new();
+        let mut methods = HashMap::new();
+        let mut init_sig = None;
+
+        let members = match class_stmt.block.as_ref() {
+            Stmt::Block(block) => &block.stmts,
+            _ => {
+                self.error(format!("Class '{}' body must be a block", class_stmt.name));
+                self.type_defs.insert(
+                    class_stmt.name.clone(),
+                    TypeDef::Class(ClassDef {
+                        visibility,
+                        field_order,
+                        fields,
+                        methods,
+                        init_sig,
+                    }),
+                );
+                return;
+            }
+        };
+
+        for member in members {
+            match member {
+                Stmt::Var(var_stmt) => {
+                    if fields.contains_key(&var_stmt.name) {
+                        self.error(format!(
+                            "Duplicate field '{}' in class '{}'",
+                            var_stmt.name, class_stmt.name
+                        ));
+                        continue;
+                    }
+                    fields.insert(var_stmt.name.clone(), var_stmt.var_type.clone());
+                    field_order.push((var_stmt.name.clone(), var_stmt.var_type.clone()));
+                }
+                Stmt::Fun(fun_stmt) => {
+                    let duplicate = methods
+                        .insert(
+                            fun_stmt.name.clone(),
+                            ImplMethodSig {
+                                visibility: Visibility::Private,
+                                sig: FunctionSig {
+                                    params: fun_stmt
+                                        .params
+                                        .iter()
+                                        .map(|param| param.param_type.clone())
+                                        .collect(),
+                                    return_type: fun_stmt.return_type.clone(),
+                                },
+                            },
+                        )
+                        .is_some();
+                    if duplicate {
+                        self.error(format!(
+                            "Duplicate method '{}' in class '{}'",
+                            fun_stmt.name, class_stmt.name
+                        ));
+                    }
+                    if fun_stmt.name == "init" {
+                        init_sig = Some(FunctionSig {
+                            params: fun_stmt
+                                .params
+                                .iter()
+                                .map(|param| param.param_type.clone())
+                                .collect(),
+                            return_type: fun_stmt.return_type.clone(),
+                        });
+                    }
+                }
+                Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                    Stmt::Fun(fun_stmt) => {
+                        let duplicate = methods
+                            .insert(
+                                fun_stmt.name.clone(),
+                                ImplMethodSig {
+                                    visibility: Visibility::Public,
+                                    sig: FunctionSig {
+                                        params: fun_stmt
+                                            .params
+                                            .iter()
+                                            .map(|param| param.param_type.clone())
+                                            .collect(),
+                                        return_type: fun_stmt.return_type.clone(),
+                                    },
+                                },
+                            )
+                            .is_some();
+                        if duplicate {
+                            self.error(format!(
+                                "Duplicate method '{}' in class '{}'",
+                                fun_stmt.name, class_stmt.name
+                            ));
+                        }
+                        if fun_stmt.name == "init" {
+                            init_sig = Some(FunctionSig {
+                                params: fun_stmt
+                                    .params
+                                    .iter()
+                                    .map(|param| param.param_type.clone())
+                                    .collect(),
+                                return_type: fun_stmt.return_type.clone(),
+                            });
+                        }
+                    }
+                    Stmt::Var(var_stmt) => {
+                        if fields.contains_key(&var_stmt.name) {
+                            self.error(format!(
+                                "Duplicate field '{}' in class '{}'",
+                                var_stmt.name, class_stmt.name
+                            ));
+                            continue;
+                        }
+                        fields.insert(var_stmt.name.clone(), var_stmt.var_type.clone());
+                        field_order.push((var_stmt.name.clone(), var_stmt.var_type.clone()));
+                    }
+                    _ => self.error("Class blocks can contain only var/fun/pub var/pub fun"),
+                },
+                _ => self.error("Class blocks can contain only var/fun/pub var/pub fun"),
+            }
+        }
+
         self.type_defs.insert(
             class_stmt.name.clone(),
-            TypeDef::Class(ClassDef { visibility }),
+            TypeDef::Class(ClassDef {
+                visibility,
+                field_order,
+                fields,
+                methods,
+                init_sig,
+            }),
         );
     }
 
@@ -736,6 +882,94 @@ impl SemanticAnalyzer {
                         ),
                     );
                 }
+            }
+        }
+    }
+
+    fn analyze_class_stmt(&mut self, class_stmt: &ClassStmt) {
+        let Some(TypeDef::Class(def)) = self.type_defs.get(&class_stmt.name).cloned() else {
+            return;
+        };
+
+        for (field_name, field_ty) in &def.fields {
+            if matches!(field_ty, Type::None) {
+                self.error(format!(
+                    "Class field '{}.{}' must declare a concrete type",
+                    class_stmt.name, field_name
+                ));
+            } else {
+                self.validate_type_exists(
+                    field_ty,
+                    &format!("field '{}.{}' type", class_stmt.name, field_name),
+                );
+            }
+        }
+
+        let members = match class_stmt.block.as_ref() {
+            Stmt::Block(block) => &block.stmts,
+            _ => return,
+        };
+
+        for member in members {
+            match member {
+                Stmt::Var(var_stmt) => {
+                    if !matches!(var_stmt.assignment, Expr::Empty) {
+                        self.push_scope();
+                        self.define_symbol(
+                            "this",
+                            Type::Identifier(class_stmt.name.clone()),
+                            false,
+                        );
+                        let rhs_ty = self.analyze_expr(&var_stmt.assignment);
+                        self.pop_scope();
+
+                        if !matches!(var_stmt.var_type, Type::None)
+                            && !is_assignable(&var_stmt.var_type, &rhs_ty)
+                        {
+                            self.error(format!(
+                                "Type mismatch for class field '{}.{}': expected {:?}, got {:?}",
+                                class_stmt.name, var_stmt.name, var_stmt.var_type, rhs_ty
+                            ));
+                        }
+                    }
+                }
+                Stmt::Fun(fun_stmt) => {
+                    let previous_impl = self.current_impl_type.clone();
+                    self.current_impl_type = Some(class_stmt.name.clone());
+                    self.analyze_fun_stmt(fun_stmt);
+                    self.current_impl_type = previous_impl;
+                }
+                Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                    Stmt::Fun(fun_stmt) => {
+                        let previous_impl = self.current_impl_type.clone();
+                        self.current_impl_type = Some(class_stmt.name.clone());
+                        self.analyze_fun_stmt(fun_stmt);
+                        self.current_impl_type = previous_impl;
+                    }
+                    Stmt::Var(var_stmt) => {
+                        if !matches!(var_stmt.assignment, Expr::Empty) {
+                            self.push_scope();
+                            self.define_symbol(
+                                "this",
+                                Type::Identifier(class_stmt.name.clone()),
+                                false,
+                            );
+                            let rhs_ty = self.analyze_expr(&var_stmt.assignment);
+                            self.pop_scope();
+
+                            if !matches!(var_stmt.var_type, Type::None)
+                                && !is_assignable(&var_stmt.var_type, &rhs_ty)
+                            {
+                                self.error(format!(
+                                    "Type mismatch for class field '{}.{}': expected {:?}, got {:?}",
+                                    class_stmt.name, var_stmt.name, var_stmt.var_type, rhs_ty
+                                ));
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
             }
         }
     }
@@ -1049,8 +1283,48 @@ impl SemanticAnalyzer {
                             }
 
                             sig.return_type
+                        } else if let Some(TypeDef::Struct(def)) = self.type_defs.get(name).cloned()
+                        {
+                            let expected = def
+                                .field_order
+                                .iter()
+                                .map(|(_, ty)| ty.clone())
+                                .collect::<Vec<_>>();
+                            self.check_constructor_call(
+                                &format!("Struct '{}'", name),
+                                &expected,
+                                &arg_types,
+                            );
+                            Type::Identifier(name.clone())
+                        } else if let Some(TypeDef::Class(def)) = self.type_defs.get(name).cloned()
+                        {
+                            let expected = if let Some(init_sig) = def.init_sig.clone() {
+                                init_sig.params
+                            } else {
+                                def.field_order
+                                    .iter()
+                                    .map(|(_, field_ty)| field_ty.clone())
+                                    .collect::<Vec<_>>()
+                            };
+                            self.check_constructor_call(
+                                &format!("Class '{}'", name),
+                                &expected,
+                                &arg_types,
+                            );
+                            Type::Identifier(name.clone())
+                        } else if let Some((enum_name, params)) =
+                            self.enum_variant_ctors.get(name).cloned()
+                        {
+                            self.check_constructor_call(
+                                &format!("Enum variant '{}'", name),
+                                &params,
+                                &arg_types,
+                            );
+                            Type::Identifier(enum_name)
+                        } else if self.imports.contains_key(name) || self.uses.contains_key(name) {
+                            Type::Identifier(name.clone())
                         } else {
-                            self.error(format!("Unknown function '{}'", name));
+                            self.error(format!("Unknown function or constructor '{}'", name));
                             Type::None
                         }
                     }
@@ -1062,7 +1336,15 @@ impl SemanticAnalyzer {
                                     .impl_methods
                                     .get(&type_name)
                                     .and_then(|methods| methods.get(&member.property))
-                                    .cloned();
+                                    .cloned()
+                                    .or_else(|| {
+                                        self.type_defs.get(&type_name).and_then(|def| match def {
+                                            TypeDef::Class(class_def) => {
+                                                class_def.methods.get(&member.property).cloned()
+                                            }
+                                            _ => None,
+                                        })
+                                    });
 
                                 if let Some(method_sig) = method {
                                     let _method_visibility = method_sig.visibility;
@@ -1134,7 +1416,19 @@ impl SemanticAnalyzer {
                                 Type::None
                             }
                         }
-                        Some(TypeDef::Class(_)) => Type::None,
+                        Some(TypeDef::Class(def)) => {
+                            if let Some(field_ty) = def.fields.get(&member.property) {
+                                field_ty.clone()
+                            } else if def.methods.contains_key(&member.property) {
+                                Type::None
+                            } else {
+                                self.error(format!(
+                                    "Unknown field '{}.{}'",
+                                    type_name, member.property
+                                ));
+                                Type::None
+                            }
+                        }
                         Some(TypeDef::Enum(_)) => {
                             self.error(format!(
                                 "Enum '{}' has no field '{}'",
@@ -1242,6 +1536,27 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn check_constructor_call(&mut self, label: &str, expected: &[Type], actual: &[Type]) {
+        if expected.len() != actual.len() {
+            self.error(format!(
+                "{} constructor expects {} args, got {}",
+                label,
+                expected.len(),
+                actual.len()
+            ));
+            return;
+        }
+
+        for (index, (expected_ty, actual_ty)) in expected.iter().zip(actual.iter()).enumerate() {
+            if !is_assignable(expected_ty, actual_ty) {
+                self.error(format!(
+                    "{} constructor argument {} expected {:?}, got {:?}",
+                    label, index, expected_ty, actual_ty
+                ));
+            }
+        }
+    }
+
     fn define_symbol(&mut self, name: &str, ty: Type, mutable: bool) {
         let current_scope = self
             .scopes
@@ -1321,9 +1636,9 @@ mod tests {
     use super::{is_assignable, SemanticAnalyzer, Visibility};
     use crate::{
         ast::{
-            BlockStmt, Expr, ExprStmt, FieldDecl, FunStmt, ImplStmt, Literal, MatchArm, MatchStmt,
-            MemberExpr, ModStmt, Param, Pattern, ReturnStmt, Stmt, StructStmt, Type, UseStmt,
-            VarStmt,
+            BlockStmt, ClassStmt, Expr, ExprStmt, FieldDecl, FunStmt, ImplStmt, Literal, MatchArm,
+            MatchStmt, MemberExpr, ModStmt, Param, Pattern, ReturnStmt, Stmt, StructStmt, Type,
+            UseStmt, VarStmt,
         },
         lexer::Token,
     };
@@ -1496,6 +1811,94 @@ mod tests {
         assert!(analyzer.errors[0]
             .message
             .contains("Function 'sum' expects 2 args, got 1"));
+    }
+
+    #[test]
+    fn constructor_call_for_struct_returns_struct_type() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.register_struct_def(
+            &StructStmt {
+                name: "Point".to_string(),
+                fields: vec![
+                    FieldDecl {
+                        name: "x".to_string(),
+                        field_type: Type::Num,
+                    },
+                    FieldDecl {
+                        name: "y".to_string(),
+                        field_type: Type::Num,
+                    },
+                ],
+            },
+            Visibility::Private,
+        );
+
+        let ty = analyzer.analyze_expr(&Expr::Call(crate::ast::CallExpr {
+            callee: Box::new(Expr::Literal(Literal::Identifier("Point".to_string()))),
+            arguments: vec![
+                Expr::Literal(Literal::Num(1.0)),
+                Expr::Literal(Literal::Num(2.0)),
+            ],
+        }));
+
+        assert_eq!(ty, Type::Identifier("Point".to_string()));
+        assert!(analyzer.errors.is_empty());
+    }
+
+    #[test]
+    fn constructor_call_for_enum_variant_returns_enum_type() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.register_enum_def(
+            &crate::ast::EnumStmt {
+                name: "Maybe".to_string(),
+                variants: vec![
+                    crate::ast::EnumVariant {
+                        name: "Some".to_string(),
+                        arguments: vec![Type::Num],
+                    },
+                    crate::ast::EnumVariant {
+                        name: "Empty".to_string(),
+                        arguments: vec![],
+                    },
+                ],
+            },
+            Visibility::Private,
+        );
+
+        let ty = analyzer.analyze_expr(&Expr::Call(crate::ast::CallExpr {
+            callee: Box::new(Expr::Literal(Literal::Identifier("Some".to_string()))),
+            arguments: vec![Expr::Literal(Literal::Num(1.0))],
+        }));
+
+        assert_eq!(ty, Type::Identifier("Maybe".to_string()));
+        assert!(analyzer.errors.is_empty());
+    }
+
+    #[test]
+    fn class_member_access_returns_declared_field_type() {
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.register_class_def(
+            &ClassStmt {
+                name: "Counter".to_string(),
+                block: Box::new(Stmt::Block(BlockStmt {
+                    stmts: vec![Stmt::Var(VarStmt {
+                        name: "value".to_string(),
+                        assignment: Expr::Empty,
+                        var_type: Type::Num,
+                    })],
+                })),
+            },
+            Visibility::Private,
+        );
+
+        analyzer.define_symbol("c", Type::Identifier("Counter".to_string()), true);
+        let ty = analyzer.analyze_expr(&Expr::Mebmer(MemberExpr {
+            member: Box::new(Expr::Literal(Literal::Identifier("c".to_string()))),
+            property: "value".to_string(),
+        }));
+
+        assert_eq!(ty, Type::Num);
+        assert!(analyzer.errors.is_empty());
     }
 
     #[test]
