@@ -1,0 +1,86 @@
+enum Node {
+    Lit(Num),
+    Add(Num, Num),
+    Mul(Num, Num),
+    Halt
+}
+
+struct Driver {
+    acc: Num;
+}
+
+impl Driver {
+    fun apply(node: Node) -> Num {
+        match node {
+            Lit(v) => {
+                this.acc = v;
+                return this.acc;
+            },
+            Add(a, b) => {
+                this.acc = a + b;
+                return this.acc;
+            },
+            Mul(a, b) => {
+                this.acc = a * b;
+                return this.acc;
+            },
+            Halt() => {
+                return this.acc;
+            }
+        }
+        return this.acc;
+    }
+}
+
+class Report {
+    var code: Num;
+
+    fun init(code: Num) {
+        this.code = code;
+    }
+
+    fun ok() -> Bool {
+        return this.code > 0;
+    }
+}
+
+fun build_program(seed: Num) -> Node[] {
+    return [
+        Lit(seed),
+        Add(seed, 2),
+        Mul(seed, 3),
+        Halt()
+    ];
+}
+
+fun execute(seed: Num) -> Num {
+    var stream: Node[] = build_program(seed);
+    var driver: Driver = Driver(0);
+    var last: Num = 0;
+
+    for node, index in stream {
+        if index < 0 {
+            continue;
+        }
+
+        match node {
+            Halt() => {
+                break;
+            },
+            _ => {
+                last = driver.apply(node);
+            }
+        }
+    }
+
+    var report: Report = Report(last);
+    if report.ok() {
+        return last;
+    } else {
+        return 0;
+    }
+}
+
+fun main() -> Num {
+    return execute(4);
+}

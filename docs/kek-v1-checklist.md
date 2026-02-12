@@ -50,7 +50,7 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] Full user-type semantics needed for bootstrap-scale code (constructor/value typing strategy, richer class/enum runtime model)
 - [x] Compatibility diagnostics policy implemented in compiler output (warnings + migration hints)
 - [x] Backend lowering support for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable ASM output
-- [ ] Bootstrap milestone: compile a non-trivial Kek program in Kek (self-host stage-0 target)
+- [x] Bootstrap milestone: compile a non-trivial Kek program in Kek (self-host stage-0 target)
 
 ## Stage 7: Self-host blocker closure (post ASM-only audit)
 - [x] Wire compiler entrypoint to workspace-level analysis/linking before ASM generation (`analyze_workspace` path)
