@@ -2,7 +2,6 @@ use std::env;
 
 use kekar::{
     asm_generator::AsmGenerator,
-    generator::JsGenerator,
     lexer::Lexer,
     parser::{render_compatibility_diagnostic, Parser},
 };
@@ -14,7 +13,6 @@ fn main() {
         std::process::exit(69);
     }
 
-    let mut target = "js".to_string();
     let mut path: Option<String> = None;
     let mut i = 1;
 
@@ -25,12 +23,22 @@ fn main() {
                     eprintln!("Missing value for --target");
                     std::process::exit(2);
                 }
-                target = args[i + 1].clone();
+                if args[i + 1] != "asm" {
+                    eprintln!(
+                        "Unsupported target '{}'. Only 'asm' is supported.",
+                        args[i + 1]
+                    );
+                    std::process::exit(2);
+                }
                 i += 2;
                 continue;
             }
             arg if arg.starts_with("--target=") => {
-                target = arg.trim_start_matches("--target=").to_string();
+                let value = arg.trim_start_matches("--target=");
+                if value != "asm" {
+                    eprintln!("Unsupported target '{}'. Only 'asm' is supported.", value);
+                    std::process::exit(2);
+                }
             }
             arg if !arg.starts_with('-') && path.is_none() => {
                 path = Some(arg.to_string());
@@ -41,7 +49,7 @@ fn main() {
     }
 
     let Some(path) = path else {
-        eprintln!("Usage: kekar <source.kek> [--target js|asm]");
+        eprintln!("Usage: kekar <source.kek> [--target asm]");
         std::process::exit(2);
     };
 
@@ -54,14 +62,7 @@ fn main() {
         eprintln!("{}", render_compatibility_diagnostic(&diagnostic));
     }
 
-    let output = match target.as_str() {
-        "js" => JsGenerator::new().generate(&ast),
-        "asm" => AsmGenerator::new().generate(&ast),
-        other => {
-            eprintln!("Unsupported target '{}'. Use 'js' or 'asm'.", other);
-            std::process::exit(2);
-        }
-    };
+    let output = AsmGenerator::new().generate(&ast);
 
     println!("{}", output);
 }

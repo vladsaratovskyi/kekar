@@ -36,11 +36,11 @@ Last updated for commit: `working tree (uncommitted)`
 - [x] Add visibility/access control semantics for `pub`
 
 ## Stage 5: Code generation alignment
-- [x] JS generator handles new AST variants (including import alias emission and placeholder lowering for module/type declarations)
+- [x] ASM generator handles new AST variants (including import alias handling and lowering for module/type declarations)
 - [x] ASM generator made exhaustive for new AST variants (unsupported constructs safely ignored with comments)
 - [x] Ensure `pub fun main` is recognized for ASM entrypoint generation
-- [x] Lower `match` to executable JS/ASM control flow instead of comments/placeholders
-- [x] Lower `struct`/`enum`/`impl` into stable runtime representation in both backends
+- [x] Lower `match` to executable ASM control flow instead of comments/placeholders
+- [x] Lower `struct`/`enum`/`impl` into stable runtime representation in ASM backend
 
 ## Stage 6: Self-hosting readiness
 - [x] Semantic guardrails exist for module/use/import declarations, user-defined types, impl methods, match coverage, and `pub` visibility
@@ -49,5 +49,5 @@ Last updated for commit: `working tree (uncommitted)`
 - [x] Namespace-aware method call resolution for impl methods and visibility across module boundaries
 - [x] Full user-type semantics needed for bootstrap-scale code (constructor/value typing strategy, richer class/enum runtime model)
 - [x] Compatibility diagnostics policy implemented in compiler output (warnings + migration hints)
-- [x] Backend lowering parity for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable JS/ASM output
+- [x] Backend lowering support for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable ASM output
 - [ ] Bootstrap milestone: compile a non-trivial Kek program in Kek (self-host stage-0 target)
