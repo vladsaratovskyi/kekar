@@ -1,7 +1,57 @@
 pub fun len(text: String) -> Num {
-    return 0;
+    return text.len();
 }
 
 pub fun concat(left: String, right: String) -> String {
-    return left;
+    var out: String = [];
+    for ch in left {
+        out = out.push(ch);
+    }
+    for ch in right {
+        out = out.push(ch);
+    }
+    return out;
+}
+
+pub fun equals(left: String, right: String) -> Bool {
+    if left.len() != right.len() {
+        return false;
+    }
+
+    var i: Num = 0;
+    while i < left.len() {
+        if left[i] != right[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+
+    return true;
+}
+
+pub fun is_empty(text: String) -> Bool {
+    return text.is_empty();
+}
+
+pub fun starts_with(text: String, prefix: String) -> Bool {
+    if prefix.len() > text.len() {
+        return false;
+    }
+
+    var i: Num = 0;
+    while i < prefix.len() {
+        if text[i] != prefix[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+
+    return true;
+}
+
+pub fun char_at(text: String, index: Num) -> Char {
+    if index < 0 || index >= text.len() {
+        return '\0';
+    }
+    return text[index];
 }

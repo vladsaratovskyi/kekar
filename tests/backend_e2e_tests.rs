@@ -323,3 +323,77 @@ fn backend_e2e_runs_full_syntax_example_program() {
 
     assert_eq!(code, 12);
 }
+
+#[test]
+fn backend_e2e_runs_bundled_std_string_basic_runtime_api() {
+    if let Err(reason) = ensure_backend_e2e_runtime() {
+        eprintln!("skipping backend e2e test: {reason}");
+        return;
+    }
+
+    let source_root = temp_workspace("workspace-stdlib-string-runtime");
+    let entry = source_root.join("main.kek");
+
+    fs::write(
+        &entry,
+        r#"
+use std::string::concat;
+use std::string::equals;
+use std::string::is_empty;
+use std::string::len;
+use std::string::starts_with;
+use std::string::char_at;
+
+fun main() -> Num {
+    var text: String = concat("ab", "c");
+    if !equals(text, "abc") {
+        return 11;
+    }
+    if is_empty(text) {
+        return 12;
+    }
+    if !starts_with(text, "ab") {
+        return 13;
+    }
+    var ch: Char = char_at(text, 1);
+    if ch != 'b' {
+        return 14;
+    }
+    return len(text);
+}
+"#,
+    )
+    .expect("should write entry source");
+
+    let code = compile_workspace_entry_and_run(&entry, "workspace-stdlib-string-runtime")
+        .expect("workspace assemble/link/run should succeed");
+
+    assert_eq!(code, 3);
+    fs::remove_dir_all(source_root).ok();
+}
+
+#[test]
+fn backend_e2e_runs_array_methods_runtime() {
+    if let Err(reason) = ensure_backend_e2e_runtime() {
+        eprintln!("skipping backend e2e test: {reason}");
+        return;
+    }
+
+    let code = compile_asm_and_run(
+        r#"
+fun main() -> Num {
+    var values: Array<Num> = [1, 2];
+    values = values.push(5);
+    var popped: Num = values.pop();
+    if values.is_empty() {
+        return 90;
+    }
+    return values.len() + popped + values[0];
+}
+"#,
+        "array-methods-runtime",
+    )
+    .expect("assemble/link/run should succeed");
+
+    assert_eq!(code, 8);
+}

@@ -220,8 +220,8 @@ fun main() -> Num {
 
     let output = compile_to_asm(source);
 
-    assert!(output.contains("__kek_str_0:"));
-    assert!(output.contains("lea rax, [rel __kek_str_0]"));
+    assert!(output.contains("mov QWORD [rax], 5"));
+    assert!(output.contains("mov QWORD [rax+8], 104"));
     assert!(output.contains("call __kek_alloc"));
     assert!(output.contains("mov rax, QWORD [rbx + rcx*8 + 8]"));
 }
@@ -324,8 +324,56 @@ fun main() -> Num {
     assert!(output.contains("__kek_struct_Point:"));
     assert!(output.contains("__kek_enum_Maybe:"));
     assert!(output.contains("__kek_impl_Point:"));
-    assert!(output.contains("__kek_str_0:"));
+    assert!(output.contains("cmp QWORD [r13], 2"));
+    assert!(output.contains("cmp QWORD [r13+8], 111"));
     assert!(output.contains("cmp QWORD [r13], 0"));
     assert!(output.contains("mov r14, QWORD [r13+16]"));
     assert!(!output.contains("unsupported literal match pattern in asm backend"));
+}
+
+#[test]
+fn lowers_string_class_style_array_methods_to_runtime_calls() {
+    let source = r#"
+fun main() -> Num {
+    var text: String = "ab";
+    text = text.push('c');
+    if text.is_empty() {
+        return 0;
+    }
+    return text.len() + text.pop();
+}
+"#;
+
+    let output = compile_to_asm(source);
+
+    assert!(output.contains("call __kek_array_push"));
+    assert!(output.contains("call __kek_array_is_empty"));
+    assert!(output.contains("call __kek_array_len"));
+    assert!(output.contains("call __kek_array_pop"));
+}
+
+#[test]
+fn lowers_array_methods_to_runtime_calls() {
+    let source = r#"
+fun main() -> Num {
+    var values: Array<Num> = [1, 2];
+    values = values.push(3);
+    var last: Num = values.pop();
+    if values.is_empty() {
+        return 0;
+    }
+    return values.len() + last;
+}
+"#;
+
+    let output = compile_to_asm(source);
+
+    assert!(output.contains("__kek_array_len:"));
+    assert!(output.contains("__kek_array_is_empty:"));
+    assert!(output.contains("__kek_array_push:"));
+    assert!(output.contains("__kek_array_pop:"));
+    assert!(output.contains("call __kek_array_push"));
+    assert!(output.contains("call __kek_array_pop"));
+    assert!(output.contains("call __kek_array_is_empty"));
+    assert!(output.contains("call __kek_array_len"));
 }

@@ -264,6 +264,10 @@ fn lower_function_symbol(
     entry_module: &Path,
     module_order: &HashMap<PathBuf, usize>,
 ) -> String {
+    if function_key.name.starts_with("__kek_") {
+        return function_key.name.clone();
+    }
+
     if function_key.module == entry_module && function_key.name == "main" {
         return "main".to_string();
     }
@@ -1652,9 +1656,10 @@ impl<'a> MethodCallResolver<'a> {
                 self.analyze_stmt(while_stmt.body.as_ref());
             }
             Stmt::For(for_stmt) => {
-                self.analyze_expr(&for_stmt.iterator);
+                let iterator_type = self.analyze_expr(&for_stmt.iterator);
                 self.push_scope();
-                self.define_symbol(&for_stmt.item, ValueType::Unknown);
+                let item_type = value_type_array_element(&iterator_type).unwrap_or(ValueType::Unknown);
+                self.define_symbol(&for_stmt.item, item_type);
                 if let Some(index) = &for_stmt.index {
                     self.define_symbol(index, ValueType::Num);
                 }
@@ -1723,16 +1728,52 @@ impl<'a> MethodCallResolver<'a> {
             }
             Expr::Assignment(left, right) => {
                 let right_type = self.analyze_expr(right);
-                if let Expr::Literal(Literal::Identifier(name)) = left.as_ref() {
-                    self.update_symbol(name, right_type.clone());
-                } else {
-                    self.analyze_expr(left);
+                match left.as_ref() {
+                    Expr::Literal(Literal::Identifier(name)) => {
+                        self.update_symbol(name, right_type.clone());
+                    }
+                    Expr::ComputedExpr(computed) => {
+                        let owner_type = self.analyze_expr(computed.member.as_ref());
+                        let index_type = self.analyze_expr(computed.property.as_ref());
+                        if !matches!(index_type, ValueType::Num | ValueType::Unknown) {
+                            self.error(format!(
+                                "Array index must be Num, got {:?}",
+                                index_type
+                            ));
+                        }
+
+                        match owner_type {
+                            ValueType::Unknown => {}
+                            other => {
+                                if let Some(inner) = value_type_array_element(&other) {
+                                    if !value_type_assignable(&inner, &right_type) {
+                                        self.error(format!(
+                                            "Indexed assignment type mismatch: expected {:?}, got {:?}",
+                                            inner, right_type
+                                        ));
+                                    }
+                                } else {
+                                    self.error(format!(
+                                        "Indexed assignment expects array target, got {:?}",
+                                        other
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        self.analyze_expr(left);
+                    }
                 }
                 right_type
             }
             Expr::Call(call) => self.analyze_call(call.callee.as_ref(), &call.arguments),
             Expr::Mebmer(member) => {
                 let owner_type = self.analyze_expr(member.member.as_ref());
+                if let Some(inner) = value_type_array_element(&owner_type) {
+                    return self.array_member_property_type(&member.property, &inner);
+                }
+
                 if let Some(type_key) = user_type_key(&owner_type).cloned() {
                     if let Some(type_info) = self.type_index.get(&type_key) {
                         if let Some(field_type) = type_info.fields.get(&member.property) {
@@ -1743,9 +1784,23 @@ impl<'a> MethodCallResolver<'a> {
                 ValueType::Unknown
             }
             Expr::ComputedExpr(computed) => {
-                self.analyze_expr(computed.member.as_ref());
-                self.analyze_expr(computed.property.as_ref());
-                ValueType::Unknown
+                let owner_type = self.analyze_expr(computed.member.as_ref());
+                let index_type = self.analyze_expr(computed.property.as_ref());
+                if !matches!(index_type, ValueType::Num | ValueType::Unknown) {
+                    self.error(format!("Array index must be Num, got {:?}", index_type));
+                }
+
+                if let Some(inner) = value_type_array_element(&owner_type) {
+                    inner
+                } else {
+                    match owner_type {
+                        ValueType::Unknown => ValueType::Unknown,
+                        other => {
+                            self.error(format!("Indexing expects array operand, got {:?}", other));
+                            ValueType::Unknown
+                        }
+                    }
+                }
             }
             Expr::Array(array) => {
                 let mut item_type = ValueType::Unknown;
@@ -1781,6 +1836,14 @@ impl<'a> MethodCallResolver<'a> {
                 }
 
                 let receiver_type = self.analyze_expr(member.member.as_ref());
+                if let Some(inner) = value_type_array_element(&receiver_type) {
+                    return self.analyze_array_method_call(
+                        &member.property,
+                        &inner,
+                        &arg_types,
+                    );
+                }
+
                 let Some(type_key) = user_type_key(&receiver_type).cloned() else {
                     return ValueType::Unknown;
                 };
@@ -1965,6 +2028,76 @@ impl<'a> MethodCallResolver<'a> {
         type_to_value_type(ty, &namespace).unwrap_or(ValueType::Unknown)
     }
 
+    fn array_member_property_type(
+        &mut self,
+        property: &str,
+        _element_type: &ValueType,
+    ) -> ValueType {
+        match property {
+            "len" => ValueType::Unknown,
+            "is_empty" => ValueType::Unknown,
+            _ => {
+                self.error(format!("Unknown array member '{}'", property));
+                ValueType::Unknown
+            }
+        }
+    }
+
+    fn analyze_array_method_call(
+        &mut self,
+        method_name: &str,
+        element_type: &ValueType,
+        arg_types: &[ValueType],
+    ) -> ValueType {
+        match method_name {
+            "len" => {
+                if !arg_types.is_empty() {
+                    self.error(format!(
+                        "Array method 'len' expects 0 args, got {}",
+                        arg_types.len()
+                    ));
+                }
+                ValueType::Num
+            }
+            "is_empty" => {
+                if !arg_types.is_empty() {
+                    self.error(format!(
+                        "Array method 'is_empty' expects 0 args, got {}",
+                        arg_types.len()
+                    ));
+                }
+                ValueType::Bool
+            }
+            "push" => {
+                if arg_types.len() != 1 {
+                    self.error(format!(
+                        "Array method 'push' expects 1 arg, got {}",
+                        arg_types.len()
+                    ));
+                } else if !value_type_assignable(element_type, &arg_types[0]) {
+                    self.error(format!(
+                        "Array method 'push' expects {:?}, got {:?}",
+                        element_type, arg_types[0]
+                    ));
+                }
+                ValueType::Array(Box::new(element_type.clone()))
+            }
+            "pop" => {
+                if !arg_types.is_empty() {
+                    self.error(format!(
+                        "Array method 'pop' expects 0 args, got {}",
+                        arg_types.len()
+                    ));
+                }
+                element_type.clone()
+            }
+            _ => {
+                self.error(format!("Unknown array method '{}'", method_name));
+                ValueType::Unknown
+            }
+        }
+    }
+
     fn define_symbol(&mut self, name: &str, ty: ValueType) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string(), ty);
@@ -2019,8 +2152,14 @@ fn value_type_assignable(expected: &ValueType, actual: &ValueType) -> bool {
         return true;
     }
 
+    if let (Some(expected_item), Some(actual_item)) = (
+        value_type_array_element(expected),
+        value_type_array_element(actual),
+    ) {
+        return value_type_assignable(&expected_item, &actual_item);
+    }
+
     match (expected, actual) {
-        (ValueType::Array(left), ValueType::Array(right)) => value_type_assignable(left, right),
         (ValueType::User(left), ValueType::User(right)) => left == right,
         (ValueType::User(left), ValueType::GenericUser(right, _))
         | (ValueType::GenericUser(left, _), ValueType::User(right)) => left == right,
@@ -2036,6 +2175,14 @@ fn value_type_assignable(expected: &ValueType, actual: &ValueType) -> bool {
     }
 }
 
+fn value_type_array_element(value_type: &ValueType) -> Option<ValueType> {
+    match value_type {
+        ValueType::Array(inner) => Some((**inner).clone()),
+        ValueType::String => Some(ValueType::Char),
+        _ => None,
+    }
+}
+
 fn type_to_value_type(ty: &Type, namespace: &HashMap<String, TypeKey>) -> Option<ValueType> {
     match ty {
         Type::Num => Some(ValueType::Num),
@@ -2046,6 +2193,11 @@ fn type_to_value_type(ty: &Type, namespace: &HashMap<String, TypeKey>) -> Option
         Type::Void => Some(ValueType::Void),
         Type::Identifier(name) => namespace.get(name).cloned().map(ValueType::User),
         Type::Generic { base, args } => {
+            if base == "Array" && args.len() == 1 {
+                let resolved = type_to_value_type(&args[0], namespace)?;
+                return Some(ValueType::Array(Box::new(resolved)));
+            }
+
             let key = namespace.get(base).cloned()?;
             let resolved_args = args
                 .iter()
@@ -2581,6 +2733,19 @@ mod tests {
                 vec![ValueType::User(value_key)]
             ))
         );
+    }
+
+    #[test]
+    fn type_to_value_type_maps_array_generic_to_builtin_array_value_type() {
+        let resolved = type_to_value_type(
+            &crate::ast::Type::Generic {
+                base: "Array".to_string(),
+                args: vec![crate::ast::Type::Num],
+            },
+            &HashMap::new(),
+        );
+
+        assert_eq!(resolved, Some(ValueType::Array(Box::new(ValueType::Num))));
     }
 
     #[test]

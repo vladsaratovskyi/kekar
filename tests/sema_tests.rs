@@ -927,3 +927,62 @@ fun main() -> Num {
     let result = analyze_source(source);
     assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
 }
+
+#[test]
+fn sema_accepts_array_methods_and_indexing() {
+    let source = r#"
+fun main() -> Num {
+    var values: Num[] = [1, 2];
+    values = values.push(3);
+    if values.is_empty() {
+        return 0;
+    }
+    var first: Num = values[0];
+    var last: Num = values.pop();
+    return values.len() + first + last;
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}
+
+#[test]
+fn sema_rejects_non_num_array_index() {
+    let source = r#"
+fun main() -> Num {
+    var values: Num[] = [1, 2];
+    return values[true];
+}
+"#;
+
+    assert_has_error(source, "Array index must be Num, got Bool");
+}
+
+#[test]
+fn sema_rejects_array_push_type_mismatch() {
+    let source = r#"
+fun main() -> Num {
+    var values: Num[] = [1, 2];
+    values = values.push(true);
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Array method 'push' expects Num, got Bool");
+}
+
+#[test]
+fn sema_accepts_array_generic_class_style_type() {
+    let source = r#"
+fun main() -> Num {
+    var values: Array<Num> = [1, 2];
+    values = values.push(3);
+    var first: Num = values[0];
+    return values.len() + first;
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}

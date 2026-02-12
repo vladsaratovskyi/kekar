@@ -164,6 +164,10 @@ base_type    = "Num" | "Bool" | "String" | "Char" | "Byte" | "Void"
 - Conditions must be `Bool`
 - `&&` and `||` short-circuit
 - `for item, index in expr` binds element + zero-based index
+- `Array<T>` is a built-in generic container type; `T[]` is compatibility syntax for the same runtime type
+- `String` is represented as `Array<Char>` at runtime and supports the same index/iteration model
+- Array indexing requires numeric index expressions
+- Built-in array methods are available on both `Array<T>` and `T[]`: `len()`, `is_empty()`, `push(T)`, `pop()`
 - `return;` is legal only in functions returning `Void` (or compatibility mode if not yet type-checked)
 - `this` is valid inside class methods, struct methods, and `impl` methods
 

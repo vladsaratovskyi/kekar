@@ -10,9 +10,6 @@ use crate::{
 
 pub struct AsmGenerator {
     label_counter: usize,
-    string_counter: usize,
-    string_literals: Vec<(String, String)>,
-    string_labels: HashMap<String, String>,
     enum_variant_tags: HashMap<String, i64>,
     enum_variant_types: HashMap<String, String>,
     enum_variant_payloads: HashMap<String, usize>,
@@ -52,9 +49,6 @@ impl AsmGenerator {
     pub fn new() -> Self {
         Self {
             label_counter: 0,
-            string_counter: 0,
-            string_literals: Vec::new(),
-            string_labels: HashMap::new(),
             enum_variant_tags: HashMap::new(),
             enum_variant_types: HashMap::new(),
             enum_variant_payloads: HashMap::new(),
@@ -93,6 +87,55 @@ impl AsmGenerator {
             "    mov rdi, 70".to_string(),
             "    syscall".to_string(),
             String::new(),
+            "__kek_array_len:".to_string(),
+            "    mov rax, QWORD [rdi]".to_string(),
+            "    ret".to_string(),
+            String::new(),
+            "__kek_array_is_empty:".to_string(),
+            "    cmp QWORD [rdi], 0".to_string(),
+            "    sete al".to_string(),
+            "    movzx rax, al".to_string(),
+            "    ret".to_string(),
+            String::new(),
+            "__kek_array_push:".to_string(),
+            "    push rdi".to_string(),
+            "    push rsi".to_string(),
+            "    mov rcx, QWORD [rdi]".to_string(),
+            "    lea rdx, [rcx+1]".to_string(),
+            "    mov rdi, rdx".to_string(),
+            "    add rdi, 1".to_string(),
+            "    shl rdi, 3".to_string(),
+            "    call __kek_alloc".to_string(),
+            "    mov r8, rax".to_string(),
+            "    mov QWORD [r8], rdx".to_string(),
+            "    mov r9, QWORD [rsp+8]".to_string(),
+            "    xor r10, r10".to_string(),
+            ".array_push_copy_loop:".to_string(),
+            "    cmp r10, rcx".to_string(),
+            "    jge .array_push_copy_done".to_string(),
+            "    mov r11, QWORD [r9+r10*8+8]".to_string(),
+            "    mov QWORD [r8+r10*8+8], r11".to_string(),
+            "    inc r10".to_string(),
+            "    jmp .array_push_copy_loop".to_string(),
+            ".array_push_copy_done:".to_string(),
+            "    mov r11, QWORD [rsp]".to_string(),
+            "    mov QWORD [r8+rcx*8+8], r11".to_string(),
+            "    add rsp, 16".to_string(),
+            "    mov rax, r8".to_string(),
+            "    ret".to_string(),
+            String::new(),
+            "__kek_array_pop:".to_string(),
+            "    mov rcx, QWORD [rdi]".to_string(),
+            "    cmp rcx, 0".to_string(),
+            "    jle .array_pop_empty".to_string(),
+            "    mov rax, QWORD [rdi+rcx*8]".to_string(),
+            "    sub rcx, 1".to_string(),
+            "    mov QWORD [rdi], rcx".to_string(),
+            "    ret".to_string(),
+            ".array_pop_empty:".to_string(),
+            "    mov rax, 0".to_string(),
+            "    ret".to_string(),
+            String::new(),
             "_start:".to_string(),
         ];
         let mut rodata_lines = vec!["section .rodata".to_string()];
@@ -130,8 +173,6 @@ impl AsmGenerator {
             self.emit_top_level_stmt(stmt, &mut text_lines, &mut rodata_lines);
         }
 
-        self.emit_string_literals(&mut rodata_lines);
-
         if rodata_lines.len() > 1 {
             text_lines.push(String::new());
             text_lines.append(&mut rodata_lines);
@@ -154,9 +195,6 @@ impl AsmGenerator {
         self.method_sigs.clear();
         self.class_initializers.clear();
         self.emitted_impl_metadata.clear();
-        self.string_counter = 0;
-        self.string_literals.clear();
-        self.string_labels.clear();
 
         for stmt in &program.stmts {
             let inner = match stmt {
@@ -342,30 +380,6 @@ impl AsmGenerator {
             }
             methods.insert(fun_stmt.name.clone(), sig);
         }
-    }
-
-    fn emit_string_literals(&mut self, rodata_lines: &mut Vec<String>) {
-        if self.string_literals.is_empty() {
-            return;
-        }
-
-        for (label, value) in &self.string_literals {
-            rodata_lines.push(format!("{}:", label));
-            rodata_lines.push(format!("    db {}, 0", escape_asm_string(value)));
-        }
-    }
-
-    fn intern_string_literal(&mut self, value: &str) -> String {
-        if let Some(label) = self.string_labels.get(value) {
-            return label.clone();
-        }
-
-        let label = format!("__kek_str_{}", self.string_counter);
-        self.string_counter += 1;
-        self.string_labels.insert(value.to_string(), label.clone());
-        self.string_literals
-            .push((label.clone(), value.to_string()));
-        label
     }
 
     fn emit_top_level_stmt(
@@ -598,6 +612,17 @@ impl AsmGenerator {
     }
 
     fn emit_function(&mut self, fun_stmt: &FunStmt, lines: &mut Vec<String>) {
+        if matches!(
+            fun_stmt.name.as_str(),
+            "__kek_array_len" | "__kek_array_is_empty" | "__kek_array_push" | "__kek_array_pop"
+        ) {
+            return;
+        }
+
+        if self.emit_runtime_intrinsic_function(fun_stmt, lines) {
+            return;
+        }
+
         let mut local_names = BTreeSet::new();
         let mut var_types = HashMap::new();
         for param in &fun_stmt.params {
@@ -658,6 +683,156 @@ impl AsmGenerator {
         lines.push("    pop r12".to_string());
         lines.push("    pop rbx".to_string());
         lines.push("    pop rbp".to_string());
+        lines.push("    ret".to_string());
+        lines.push(String::new());
+    }
+
+    fn emit_runtime_intrinsic_function(&self, fun_stmt: &FunStmt, lines: &mut Vec<String>) -> bool {
+        match fun_stmt.name.as_str() {
+            "__kek_string_len" => {
+                self.emit_runtime_string_len(lines);
+                true
+            }
+            "__kek_string_concat" => {
+                self.emit_runtime_string_concat(lines);
+                true
+            }
+            "__kek_string_eq" => {
+                self.emit_runtime_string_eq(lines);
+                true
+            }
+            "__kek_string_is_empty" => {
+                self.emit_runtime_string_is_empty(lines);
+                true
+            }
+            "__kek_string_starts_with" => {
+                self.emit_runtime_string_starts_with(lines);
+                true
+            }
+            "__kek_string_char_at" => {
+                self.emit_runtime_string_char_at(lines);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn emit_runtime_string_len(&self, lines: &mut Vec<String>) {
+        lines.push("__kek_string_len:".to_string());
+        lines.push("    mov rax, QWORD [rdi]".to_string());
+        lines.push("    ret".to_string());
+        lines.push(String::new());
+    }
+
+    fn emit_runtime_string_concat(&self, lines: &mut Vec<String>) {
+        lines.push("__kek_string_concat:".to_string());
+        lines.push("    push rdi".to_string());
+        lines.push("    push rsi".to_string());
+        lines.push("    mov r8, QWORD [rdi]".to_string());
+        lines.push("    mov r9, QWORD [rsi]".to_string());
+        lines.push("    mov r10, r8".to_string());
+        lines.push("    add r10, r9".to_string());
+        lines.push("    mov rdi, r10".to_string());
+        lines.push("    add rdi, 1".to_string());
+        lines.push("    shl rdi, 3".to_string());
+        lines.push("    call __kek_alloc".to_string());
+        lines.push("    mov r11, rax".to_string());
+        lines.push("    mov QWORD [r11], r10".to_string());
+        lines.push("    mov rdi, QWORD [rsp+8]".to_string());
+        lines.push("    mov rsi, QWORD [rsp]".to_string());
+        lines.push("    xor rcx, rcx".to_string());
+        lines.push(".string_concat_copy_left:".to_string());
+        lines.push("    cmp rcx, r8".to_string());
+        lines.push("    jge .string_concat_copy_right_prep".to_string());
+        lines.push("    mov rax, QWORD [rdi+rcx*8+8]".to_string());
+        lines.push("    mov QWORD [r11+rcx*8+8], rax".to_string());
+        lines.push("    inc rcx".to_string());
+        lines.push("    jmp .string_concat_copy_left".to_string());
+        lines.push(".string_concat_copy_right_prep:".to_string());
+        lines.push("    xor rcx, rcx".to_string());
+        lines.push(".string_concat_copy_right:".to_string());
+        lines.push("    cmp rcx, r9".to_string());
+        lines.push("    jge .string_concat_done".to_string());
+        lines.push("    mov r10, rcx".to_string());
+        lines.push("    add r10, r8".to_string());
+        lines.push("    mov rax, QWORD [rsi+rcx*8+8]".to_string());
+        lines.push("    mov QWORD [r11+r10*8+8], rax".to_string());
+        lines.push("    inc rcx".to_string());
+        lines.push("    jmp .string_concat_copy_right".to_string());
+        lines.push(".string_concat_done:".to_string());
+        lines.push("    add rsp, 16".to_string());
+        lines.push("    mov rax, r11".to_string());
+        lines.push("    ret".to_string());
+        lines.push(String::new());
+    }
+
+    fn emit_runtime_string_eq(&self, lines: &mut Vec<String>) {
+        lines.push("__kek_string_eq:".to_string());
+        lines.push("    mov r8, QWORD [rdi]".to_string());
+        lines.push("    cmp r8, QWORD [rsi]".to_string());
+        lines.push("    jne .string_eq_false".to_string());
+        lines.push("    xor rcx, rcx".to_string());
+        lines.push(".string_eq_loop:".to_string());
+        lines.push("    cmp rcx, r8".to_string());
+        lines.push("    jge .string_eq_true".to_string());
+        lines.push("    mov r9, QWORD [rdi+rcx*8+8]".to_string());
+        lines.push("    cmp r9, QWORD [rsi+rcx*8+8]".to_string());
+        lines.push("    jne .string_eq_false".to_string());
+        lines.push("    inc rcx".to_string());
+        lines.push("    jmp .string_eq_loop".to_string());
+        lines.push(".string_eq_false:".to_string());
+        lines.push("    mov rax, 0".to_string());
+        lines.push("    ret".to_string());
+        lines.push(".string_eq_true:".to_string());
+        lines.push("    mov rax, 1".to_string());
+        lines.push("    ret".to_string());
+        lines.push(String::new());
+    }
+
+    fn emit_runtime_string_is_empty(&self, lines: &mut Vec<String>) {
+        lines.push("__kek_string_is_empty:".to_string());
+        lines.push("    cmp QWORD [rdi], 0".to_string());
+        lines.push("    sete al".to_string());
+        lines.push("    movzx rax, al".to_string());
+        lines.push("    ret".to_string());
+        lines.push(String::new());
+    }
+
+    fn emit_runtime_string_starts_with(&self, lines: &mut Vec<String>) {
+        lines.push("__kek_string_starts_with:".to_string());
+        lines.push("    mov r8, QWORD [rdi]".to_string());
+        lines.push("    mov r9, QWORD [rsi]".to_string());
+        lines.push("    cmp r9, r8".to_string());
+        lines.push("    jg .string_starts_with_false".to_string());
+        lines.push("    xor rcx, rcx".to_string());
+        lines.push(".string_starts_with_loop:".to_string());
+        lines.push("    cmp rcx, r9".to_string());
+        lines.push("    je .string_starts_with_true".to_string());
+        lines.push("    mov r10, QWORD [rdi+rcx*8+8]".to_string());
+        lines.push("    cmp r10, QWORD [rsi+rcx*8+8]".to_string());
+        lines.push("    jne .string_starts_with_false".to_string());
+        lines.push("    inc rcx".to_string());
+        lines.push("    jmp .string_starts_with_loop".to_string());
+        lines.push(".string_starts_with_false:".to_string());
+        lines.push("    mov rax, 0".to_string());
+        lines.push("    ret".to_string());
+        lines.push(".string_starts_with_true:".to_string());
+        lines.push("    mov rax, 1".to_string());
+        lines.push("    ret".to_string());
+        lines.push(String::new());
+    }
+
+    fn emit_runtime_string_char_at(&self, lines: &mut Vec<String>) {
+        lines.push("__kek_string_char_at:".to_string());
+        lines.push("    mov rcx, rsi".to_string());
+        lines.push("    cmp rcx, 0".to_string());
+        lines.push("    jl .string_char_at_oob".to_string());
+        lines.push("    cmp rcx, QWORD [rdi]".to_string());
+        lines.push("    jge .string_char_at_oob".to_string());
+        lines.push("    mov rax, QWORD [rdi+rcx*8+8]".to_string());
+        lines.push("    ret".to_string());
+        lines.push(".string_char_at_oob:".to_string());
+        lines.push("    mov rax, 0".to_string());
         lines.push("    ret".to_string());
         lines.push(String::new());
     }
@@ -897,10 +1072,20 @@ impl AsmGenerator {
                     lines.push(format!("    jne {}", fail_label));
                 }
                 Literal::String(value) => {
-                    let label = self.intern_string_literal(value);
-                    lines.push(format!("    lea r14, [rel {}]", label));
-                    lines.push(format!("    cmp {}, r14", value_reg));
+                    let chars = value.chars().collect::<Vec<_>>();
+                    lines.push(format!("    cmp {}, 0", value_reg));
+                    lines.push(format!("    je {}", fail_label));
+                    lines.push(format!("    cmp QWORD [{}], {}", value_reg, chars.len()));
                     lines.push(format!("    jne {}", fail_label));
+                    for (index, ch) in chars.iter().enumerate() {
+                        lines.push(format!(
+                            "    cmp QWORD [{}+{}], {}",
+                            value_reg,
+                            8 + index * 8,
+                            *ch as u32
+                        ));
+                        lines.push(format!("    jne {}", fail_label));
+                    }
                 }
                 Literal::Identifier(name) if name == "None" => {
                     lines.push(format!("    cmp {}, 0", value_reg));
@@ -1269,8 +1454,7 @@ impl AsmGenerator {
                 }
             }
             Literal::String(value) => {
-                let label = self.intern_string_literal(value);
-                lines.push(format!("    lea rax, [rel {}]", label));
+                self.emit_string_literal_array_into(value, "rax", lines);
             }
             Literal::This => {
                 if let Some(offset) = ctx.var_offsets.get("this") {
@@ -1288,6 +1472,24 @@ impl AsmGenerator {
             .get(type_name)
             .and_then(|layout| layout.fields.get(field_name))
             .map(|field| field.offset)
+    }
+
+    fn emit_string_literal_array_into(&self, value: &str, target_reg: &str, lines: &mut Vec<String>) {
+        let chars = value.chars().collect::<Vec<_>>();
+        let total_bytes = ((chars.len() + 1) * 8) as i64;
+        lines.push(format!("    mov rdi, {}", total_bytes));
+        lines.push("    call __kek_alloc".to_string());
+        lines.push(format!("    mov QWORD [rax], {}", chars.len()));
+        for (index, ch) in chars.iter().enumerate() {
+            lines.push(format!(
+                "    mov QWORD [rax+{}], {}",
+                8 + index * 8,
+                *ch as u32
+            ));
+        }
+        if target_reg != "rax" {
+            lines.push(format!("    mov {}, rax", target_reg));
+        }
     }
 
     fn emit_constructor_call(
@@ -1418,6 +1620,11 @@ impl AsmGenerator {
 
         lines.push("    pop rdi".to_string());
 
+        if array_element_type(&receiver_type).is_some() {
+            self.emit_array_member_call(&member.property, args.len(), lines);
+            return;
+        }
+
         if let Some(type_name) = user_type_name(&receiver_type) {
             if let Some(methods) = self.method_sigs.get(&type_name) {
                 if let Some(sig) = methods.get(&member.property) {
@@ -1444,6 +1651,51 @@ impl AsmGenerator {
 
         lines.push("    ; dynamic/member call unsupported in asm backend".to_string());
         lines.push("    mov rax, 0".to_string());
+    }
+
+    fn emit_array_member_call(&self, method_name: &str, arg_len: usize, lines: &mut Vec<String>) {
+        match method_name {
+            "len" => {
+                if arg_len != 0 {
+                    lines.push(format!(
+                        "    ; array method 'len' expects 0 args, got {}",
+                        arg_len
+                    ));
+                }
+                lines.push("    call __kek_array_len".to_string());
+            }
+            "is_empty" => {
+                if arg_len != 0 {
+                    lines.push(format!(
+                        "    ; array method 'is_empty' expects 0 args, got {}",
+                        arg_len
+                    ));
+                }
+                lines.push("    call __kek_array_is_empty".to_string());
+            }
+            "push" => {
+                if arg_len != 1 {
+                    lines.push(format!(
+                        "    ; array method 'push' expects 1 arg, got {}",
+                        arg_len
+                    ));
+                }
+                lines.push("    call __kek_array_push".to_string());
+            }
+            "pop" => {
+                if arg_len != 0 {
+                    lines.push(format!(
+                        "    ; array method 'pop' expects 0 args, got {}",
+                        arg_len
+                    ));
+                }
+                lines.push("    call __kek_array_pop".to_string());
+            }
+            _ => {
+                lines.push(format!("    ; unknown array method '{}'", method_name));
+                lines.push("    mov rax, 0".to_string());
+            }
+        }
     }
 
     fn infer_expr_type(&self, expr: &Expr, ctx: &FunctionContext) -> Type {
@@ -1497,8 +1749,8 @@ impl AsmGenerator {
             }
             Expr::ComputedExpr(computed) => {
                 let owner_type = self.infer_expr_type(computed.member.as_ref(), ctx);
-                if let Type::Array(inner) = owner_type {
-                    return (*inner).clone();
+                if let Some(inner) = array_element_type(&owner_type) {
+                    return inner;
                 }
                 Type::None
             }
@@ -1517,6 +1769,16 @@ impl AsmGenerator {
                 }
                 Expr::Mebmer(member) => {
                     let receiver_type = self.infer_expr_type(member.member.as_ref(), ctx);
+                    if let Some(inner) = array_element_type(&receiver_type) {
+                        return match member.property.as_str() {
+                            "len" => Type::Num,
+                            "is_empty" => Type::Bool,
+                            "push" => receiver_type.clone(),
+                            "pop" => inner,
+                            _ => Type::None,
+                        };
+                    }
+
                     if let Some(type_name) = user_type_name(&receiver_type) {
                         if let Some(methods) = self.method_sigs.get(&type_name) {
                             if let Some(sig) = methods.get(&member.property) {
@@ -1646,23 +1908,21 @@ fn collect_expr_locals(expr: &Expr, locals: &mut BTreeSet<String>) {
     }
 }
 
-fn escape_asm_string(value: &str) -> String {
-    let mut escaped = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'\\' => escaped.push_str("\\\\"),
-            b'"' => escaped.push_str("\\\""),
-            0x20..=0x7e => escaped.push(byte as char),
-            _ => escaped.push_str(&format!("\\x{:02x}", byte)),
+fn array_element_type(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::Array(inner) => Some((**inner).clone()),
+        Type::Generic { base, args } if base == "Array" && args.len() == 1 => {
+            Some(args[0].clone())
         }
+        Type::String => Some(Type::Char),
+        _ => None,
     }
-    format!("\"{}\"", escaped)
 }
 
 fn user_type_name(ty: &Type) -> Option<String> {
     match ty {
         Type::Identifier(name) => Some(name.clone()),
-        Type::Generic { base, .. } => Some(base.clone()),
+        Type::Generic { base, .. } if base != "Array" => Some(base.clone()),
         _ => None,
     }
 }
@@ -1946,7 +2206,7 @@ fun main() -> Num {
     }
 
     #[test]
-    fn emit_pattern_guard_string_uses_interned_label_compare() {
+    fn emit_pattern_guard_string_compares_array_length_and_elements() {
         let mut generator = AsmGenerator::new();
         let mut lines = Vec::new();
 
@@ -1957,10 +2217,10 @@ fun main() -> Num {
             &mut lines,
         );
 
-        assert!(lines
-            .iter()
-            .any(|line| line.starts_with("    lea r14, [rel __kek_str_")));
-        assert!(lines.contains(&"    cmp r13, r14".to_string()));
+        assert!(lines.contains(&"    cmp r13, 0".to_string()));
+        assert!(lines.contains(&"    cmp QWORD [r13], 2".to_string()));
+        assert!(lines.contains(&"    cmp QWORD [r13+8], 111".to_string()));
+        assert!(lines.contains(&"    cmp QWORD [r13+16], 107".to_string()));
         assert!(lines.contains(&"    jne .match_fail".to_string()));
     }
 

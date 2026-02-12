@@ -126,7 +126,7 @@ fn lexes_hex_and_decimal_numbers() {
 
 #[test]
 fn lexes_char_literals_with_escapes() {
-    let tokens = lex("'a' '\\n' '\\'' '\\\\'");
+    let tokens = lex("'a' '\\n' '\\'' '\\\\' '\\0'");
 
     assert_eq!(
         tokens,
@@ -135,6 +135,7 @@ fn lexes_char_literals_with_escapes() {
             Token::Char('\n'),
             Token::Char('\''),
             Token::Char('\\'),
+            Token::Char('\0'),
             Token::Eof,
         ]
     );

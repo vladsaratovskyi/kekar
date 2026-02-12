@@ -579,6 +579,64 @@ pub fun add(a: Num, b: Num) -> Num {
 }
 
 #[test]
+fn workspace_preserves_reserved_runtime_function_symbols() {
+    let root = temp_workspace("preserve-runtime-symbols");
+    let entry = root.join("main.kek");
+    let util = root.join("util.kek");
+
+    write_file(
+        &entry,
+        r#"
+import Util from "./util.kek";
+
+fun main() -> Num {
+    return Util.call_len("abc");
+}
+"#,
+    );
+
+    write_file(
+        &util,
+        r#"
+pub fun call_len(text: String) -> Num {
+    return __kek_string_len(text);
+}
+
+fun __kek_string_len(text: String) -> Num {
+    return 0;
+}
+"#,
+    );
+
+    let linked = build_workspace_program(&entry).expect("workspace linking should succeed");
+    let function_names = linked
+        .stmts
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Fun(fun_stmt) => Some(fun_stmt.name.as_str()),
+            Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                Stmt::Fun(fun_stmt) => Some(fun_stmt.name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        function_names.iter().any(|name| *name == "__kek_string_len"),
+        "expected reserved runtime symbol to remain stable, got: {function_names:?}"
+    );
+    assert!(
+        !function_names
+            .iter()
+            .any(|name| name.starts_with("__kek_m") && name.ends_with("__kek_string_len")),
+        "expected reserved runtime symbol to avoid workspace mangling, got: {function_names:?}"
+    );
+
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}
+
+#[test]
 fn workspace_resolves_bundled_stdlib_use_paths_and_calls() {
     let root = temp_workspace("stdlib-use-ok");
     let entry = root.join("main.kek");
@@ -644,5 +702,133 @@ fun main() -> Num {
     );
 
     assert_has_error(&entry, "Argument 0 for function 'len' expected String, got Num");
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}
+
+#[test]
+fn workspace_resolves_bundled_std_string_basic_api() {
+    let root = temp_workspace("stdlib-string-basic-api");
+    let entry = root.join("main.kek");
+
+    write_file(
+        &entry,
+        r#"
+use std::string::concat;
+use std::string::equals;
+use std::string::is_empty;
+use std::string::len;
+use std::string::starts_with;
+use std::string::char_at;
+
+fun main() -> Num {
+    var text: String = concat("he", "llo");
+    var ok: Bool = equals(text, "hello");
+    if !ok || is_empty(text) || !starts_with(text, "he") {
+        return 0;
+    }
+    var c: Char = char_at(text, 1);
+    if c == 'e' {
+        return len(text);
+    }
+    return 0;
+}
+"#,
+    );
+
+    let result = analyze_workspace(&entry);
+    assert!(result.is_ok(), "Expected no workspace errors: {result:?}");
+
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}
+
+#[test]
+fn workspace_enforces_std_string_equals_argument_types() {
+    let root = temp_workspace("stdlib-string-equals-arg-type");
+    let entry = root.join("main.kek");
+
+    write_file(
+        &entry,
+        r#"
+use std::string::equals;
+
+fun main() -> Num {
+    if equals("a", 1) {
+        return 1;
+    }
+    return 0;
+}
+"#,
+    );
+
+    assert_has_error(&entry, "Argument 1 for function 'equals' expected String, got Num");
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}
+
+#[test]
+fn workspace_accepts_array_methods_and_indexing() {
+    let root = temp_workspace("array-methods-ok");
+    let entry = root.join("main.kek");
+
+    write_file(
+        &entry,
+        r#"
+fun main() -> Num {
+    var values: Num[] = [1, 2];
+    values = values.push(3);
+    var first: Num = values[0];
+    var last: Num = values.pop();
+    if values.is_empty() {
+        return 0;
+    }
+    return values.len() + first + last;
+}
+"#,
+    );
+
+    let result = analyze_workspace(&entry);
+    assert!(result.is_ok(), "Expected no workspace errors: {result:?}");
+
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}
+
+#[test]
+fn workspace_rejects_array_index_type_mismatch() {
+    let root = temp_workspace("array-index-mismatch");
+    let entry = root.join("main.kek");
+
+    write_file(
+        &entry,
+        r#"
+fun main() -> Num {
+    var values: Num[] = [1, 2];
+    return values[true];
+}
+"#,
+    );
+
+    assert_has_error(&entry, "Array index must be Num, got Bool");
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}
+
+#[test]
+fn workspace_accepts_array_generic_class_style_type() {
+    let root = temp_workspace("array-generic-class-style-ok");
+    let entry = root.join("main.kek");
+
+    write_file(
+        &entry,
+        r#"
+fun main() -> Num {
+    var values: Array<Num> = [1, 2];
+    values = values.push(4);
+    var first: Num = values[0];
+    return values.len() + first;
+}
+"#,
+    );
+
+    let result = analyze_workspace(&entry);
+    assert!(result.is_ok(), "Expected no workspace errors: {result:?}");
+
     fs::remove_dir_all(root).expect("should clean test workspace");
 }

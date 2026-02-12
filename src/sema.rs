@@ -821,6 +821,10 @@ impl SemanticAnalyzer {
                     || self.uses.contains_key(name)
             }
             Type::Generic { base, args } => {
+                if base == "Array" {
+                    return args.len() == 1 && self.is_known_type(&args[0]);
+                }
+
                 (self.type_defs.contains_key(base)
                     || self.imports.contains_key(base)
                     || self.uses.contains_key(base))
@@ -889,16 +893,17 @@ impl SemanticAnalyzer {
         let iterator_type = self.analyze_expr(&for_stmt.iterator);
 
         self.push_scope();
-        match iterator_type {
-            Type::Array(item_ty) => {
-                self.define_symbol(&for_stmt.item, *item_ty, true);
-            }
-            Type::None => {
-                self.define_symbol(&for_stmt.item, Type::None, true);
-            }
-            other => {
-                self.error(format!("For iterator must be array-like, got {:?}", other));
-                self.define_symbol(&for_stmt.item, Type::None, true);
+        if let Some(item_ty) = array_element_type(&iterator_type) {
+            self.define_symbol(&for_stmt.item, item_ty, true);
+        } else {
+            match iterator_type {
+                Type::None => {
+                    self.define_symbol(&for_stmt.item, Type::None, true);
+                }
+                other => {
+                    self.error(format!("For iterator must be array-like, got {:?}", other));
+                    self.define_symbol(&for_stmt.item, Type::None, true);
+                }
             }
         }
 
@@ -1370,8 +1375,33 @@ impl SemanticAnalyzer {
                         }
                     }
                     Expr::ComputedExpr(computed) => {
-                        self.analyze_expr(computed.member.as_ref());
-                        self.analyze_expr(computed.property.as_ref());
+                        let owner_ty = self.analyze_expr(computed.member.as_ref());
+                        let index_ty = self.analyze_expr(computed.property.as_ref());
+                        if !matches!(index_ty, Type::Num | Type::None) {
+                            self.error(format!(
+                                "Array index must be Num, got {:?}",
+                                index_ty
+                            ));
+                        }
+
+                        if let Some(inner) = array_element_type(&owner_ty) {
+                            if !is_assignable(&inner, &right_ty) {
+                                self.error(format!(
+                                    "Indexed assignment type mismatch: expected {:?}, got {:?}",
+                                    inner, right_ty
+                                ));
+                            }
+                        } else {
+                            match owner_ty {
+                                Type::None => {}
+                                other => {
+                                    self.error(format!(
+                                        "Indexed assignment expects array target, got {:?}",
+                                        other
+                                    ));
+                                }
+                            }
+                        }
                     }
                     _ => {
                         self.error("Unsupported assignment target");
@@ -1458,6 +1488,14 @@ impl SemanticAnalyzer {
                     }
                     Expr::Mebmer(member) => {
                         let owner_ty = self.analyze_expr(member.member.as_ref());
+                        if let Some(inner) = array_element_type(&owner_ty) {
+                            return self.analyze_array_method_call(
+                                &member.property,
+                                &inner,
+                                &arg_types,
+                            );
+                        }
+
                         match owner_ty {
                             Type::Identifier(type_name) => {
                                 let method = self
@@ -1584,6 +1622,16 @@ impl SemanticAnalyzer {
             }
             Expr::Mebmer(member) => {
                 let owner_ty = self.analyze_expr(member.member.as_ref());
+                if array_element_type(&owner_ty).is_some() {
+                    return match member.property.as_str() {
+                        "len" | "is_empty" | "push" | "pop" => Type::None,
+                        _ => {
+                            self.error(format!("Unknown array member '{}'", member.property));
+                            Type::None
+                        }
+                    };
+                }
+
                 match owner_ty {
                     Type::Identifier(type_name) => match self.type_defs.get(&type_name) {
                         Some(TypeDef::Struct(def)) => {
@@ -1686,9 +1734,23 @@ impl SemanticAnalyzer {
                 }
             }
             Expr::ComputedExpr(computed) => {
-                self.analyze_expr(computed.member.as_ref());
-                self.analyze_expr(computed.property.as_ref());
-                Type::None
+                let owner_ty = self.analyze_expr(computed.member.as_ref());
+                let index_ty = self.analyze_expr(computed.property.as_ref());
+                if !matches!(index_ty, Type::Num | Type::None) {
+                    self.error(format!("Array index must be Num, got {:?}", index_ty));
+                }
+
+                if let Some(inner) = array_element_type(&owner_ty) {
+                    inner
+                } else {
+                    match owner_ty {
+                        Type::None => Type::None,
+                        other => {
+                            self.error(format!("Indexing expects array operand, got {:?}", other));
+                            Type::None
+                        }
+                    }
+                }
             }
             Expr::Array(array) => {
                 let mut element_type = Type::None;
@@ -1767,6 +1829,64 @@ impl SemanticAnalyzer {
                 Type::Bool
             }
             _ => Type::None,
+        }
+    }
+
+    fn analyze_array_method_call(
+        &mut self,
+        method_name: &str,
+        element_type: &Type,
+        arg_types: &[Type],
+    ) -> Type {
+        match method_name {
+            "len" => {
+                if !arg_types.is_empty() {
+                    self.error(format!(
+                        "Array method 'len' expects 0 args, got {}",
+                        arg_types.len()
+                    ));
+                }
+                Type::Num
+            }
+            "is_empty" => {
+                if !arg_types.is_empty() {
+                    self.error(format!(
+                        "Array method 'is_empty' expects 0 args, got {}",
+                        arg_types.len()
+                    ));
+                }
+                Type::Bool
+            }
+            "push" => {
+                if arg_types.len() != 1 {
+                    self.error(format!(
+                        "Array method 'push' expects 1 arg, got {}",
+                        arg_types.len()
+                    ));
+                } else if !is_assignable(element_type, &arg_types[0]) {
+                    self.error(format!(
+                        "Array method 'push' expects {:?}, got {:?}",
+                        element_type, arg_types[0]
+                    ));
+                }
+                Type::Generic {
+                    base: "Array".to_string(),
+                    args: vec![element_type.clone()],
+                }
+            }
+            "pop" => {
+                if !arg_types.is_empty() {
+                    self.error(format!(
+                        "Array method 'pop' expects 0 args, got {}",
+                        arg_types.len()
+                    ));
+                }
+                element_type.clone()
+            }
+            _ => {
+                self.error(format!("Unknown array method '{}'", method_name));
+                Type::None
+            }
         }
     }
 
@@ -1856,8 +1976,13 @@ fn is_assignable(expected: &Type, actual: &Type) -> bool {
         return true;
     }
 
+    if let (Some(expected_item), Some(actual_item)) =
+        (array_element_type(expected), array_element_type(actual))
+    {
+        return is_assignable(&expected_item, &actual_item);
+    }
+
     match (expected, actual) {
-        (Type::Array(left), Type::Array(right)) => is_assignable(left, right),
         (Type::Identifier(left), Type::Identifier(right)) => left == right,
         (
             Type::Generic {
@@ -1869,6 +1994,9 @@ fn is_assignable(expected: &Type, actual: &Type) -> bool {
                 args: right_args,
             },
         ) => {
+            if left_base == "Array" || right_base == "Array" {
+                return false;
+            }
             left_base == right_base
                 && left_args.len() == right_args.len()
                 && left_args
@@ -1882,10 +2010,21 @@ fn is_assignable(expected: &Type, actual: &Type) -> bool {
     }
 }
 
+fn array_element_type(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::Array(inner) => Some((**inner).clone()),
+        Type::Generic { base, args } if base == "Array" && args.len() == 1 => {
+            Some(args[0].clone())
+        }
+        Type::String => Some(Type::Char),
+        _ => None,
+    }
+}
+
 fn user_type_base_name(ty: &Type) -> Option<&str> {
     match ty {
         Type::Identifier(name) => Some(name),
-        Type::Generic { base, .. } => Some(base),
+        Type::Generic { base, .. } if base != "Array" => Some(base),
         _ => None,
     }
 }
@@ -1915,6 +2054,30 @@ mod tests {
         assert!(!is_assignable(
             &Type::Array(Box::new(Type::Num)),
             &Type::Array(Box::new(Type::Bool))
+        ));
+        assert!(is_assignable(
+            &Type::Generic {
+                base: "Array".to_string(),
+                args: vec![Type::Num],
+            },
+            &Type::Array(Box::new(Type::Num))
+        ));
+        assert!(is_assignable(
+            &Type::Array(Box::new(Type::Num)),
+            &Type::Generic {
+                base: "Array".to_string(),
+                args: vec![Type::Num],
+            }
+        ));
+        assert!(!is_assignable(
+            &Type::Generic {
+                base: "Array".to_string(),
+                args: vec![Type::Num],
+            },
+            &Type::Generic {
+                base: "Array".to_string(),
+                args: vec![Type::Bool],
+            }
         ));
         assert!(is_assignable(
             &Type::Generic {
