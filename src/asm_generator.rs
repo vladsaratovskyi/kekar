@@ -1315,17 +1315,13 @@ impl AsmGenerator {
                             lines,
                         );
                     } else {
-                        let registers = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
-                        for (index, arg) in call.arguments.iter().enumerate() {
-                            self.emit_expr(arg, ctx, lines);
-                            if let Some(reg) = registers.get(index) {
-                                lines.push(format!("    mov {}, rax", reg));
-                            } else {
-                                lines.push(
-                                    "    ; call argument exceeds register support".to_string(),
-                                );
-                            }
-                        }
+                        self.emit_call_args_to_registers(
+                            &call.arguments,
+                            ctx,
+                            &["rdi", "rsi", "rdx", "rcx", "r8", "r9"],
+                            "call argument exceeds register support",
+                            lines,
+                        );
                         lines.push(format!("    call {}", name));
                     }
                 }
@@ -1528,15 +1524,13 @@ impl AsmGenerator {
         }
 
         if let Some(init_sig) = self.class_initializers.get(type_name).cloned() {
-            let arg_regs = ["rsi", "rdx", "rcx", "r8", "r9"];
-            for (index, arg) in args.iter().enumerate() {
-                self.emit_expr(arg, ctx, lines);
-                if let Some(reg) = arg_regs.get(index) {
-                    lines.push(format!("    mov {}, rax", reg));
-                } else {
-                    lines.push("    ; initializer argument exceeds register support".to_string());
-                }
-            }
+            self.emit_call_args_to_registers(
+                args,
+                ctx,
+                &["rsi", "rdx", "rcx", "r8", "r9"],
+                "initializer argument exceeds register support",
+                lines,
+            );
             lines.push("    mov rdi, QWORD [rsp]".to_string());
             lines.push(format!("    call {}", init_sig.label));
         }
@@ -1610,15 +1604,13 @@ impl AsmGenerator {
         self.emit_expr(member.member.as_ref(), ctx, lines);
         lines.push("    push rax".to_string());
 
-        let arg_regs = ["rsi", "rdx", "rcx", "r8", "r9"];
-        for (index, arg) in args.iter().enumerate() {
-            self.emit_expr(arg, ctx, lines);
-            if let Some(reg) = arg_regs.get(index) {
-                lines.push(format!("    mov {}, rax", reg));
-            } else {
-                lines.push("    ; method argument exceeds register support".to_string());
-            }
-        }
+        self.emit_call_args_to_registers(
+            args,
+            ctx,
+            &["rsi", "rdx", "rcx", "r8", "r9"],
+            "method argument exceeds register support",
+            lines,
+        );
 
         lines.push("    pop rdi".to_string());
 
@@ -1696,6 +1688,29 @@ impl AsmGenerator {
             _ => {
                 lines.push(format!("    ; unknown array method '{}'", method_name));
                 lines.push("    mov rax, 0".to_string());
+            }
+        }
+    }
+
+    fn emit_call_args_to_registers(
+        &mut self,
+        args: &[Expr],
+        ctx: &mut FunctionContext,
+        registers: &[&str],
+        overflow_comment: &str,
+        lines: &mut Vec<String>,
+    ) {
+        for arg in args {
+            self.emit_expr(arg, ctx, lines);
+            lines.push("    push rax".to_string());
+        }
+
+        for index in (0..args.len()).rev() {
+            if let Some(reg) = registers.get(index) {
+                lines.push(format!("    pop {}", reg));
+            } else {
+                lines.push(format!("    ; {}", overflow_comment));
+                lines.push("    add rsp, 8".to_string());
             }
         }
     }
@@ -2053,6 +2068,55 @@ fun main() -> Num {
         assert!(output.contains("call Boxed__read"));
         assert!(!output.contains("member access requires user type"));
         assert!(!output.contains("dynamic/member call unsupported in asm backend"));
+    }
+
+    #[test]
+    fn lowers_function_calls_by_staging_args_then_loading_call_registers() {
+        let source = r#"
+fun take(left: String, right: String) -> Num {
+    return left.len() + right.len();
+}
+
+fun main() -> Num {
+    return take("ab", "c");
+}
+"#;
+
+        let mut lexer = Lexer::from_source(source);
+        let tokens = lexer.lex_file();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse();
+
+        let mut generator = AsmGenerator::new();
+        let output = generator.generate(&ast);
+
+        assert!(output.contains("pop rsi\n    pop rdi\n    call take"));
+    }
+
+    #[test]
+    fn lowers_member_calls_by_staging_args_then_loading_call_registers() {
+        let source = r#"
+struct Boxed {
+    fun take(left: String, right: String) -> Num {
+        return left.len() + right.len();
+    }
+}
+
+fun main() -> Num {
+    var box: Boxed = Boxed();
+    return box.take("ab", "c");
+}
+"#;
+
+        let mut lexer = Lexer::from_source(source);
+        let tokens = lexer.lex_file();
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse();
+
+        let mut generator = AsmGenerator::new();
+        let output = generator.generate(&ast);
+
+        assert!(output.contains("pop rdx\n    pop rsi\n    pop rdi\n    call Boxed__take"));
     }
 
     #[test]
