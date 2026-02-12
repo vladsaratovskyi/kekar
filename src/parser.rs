@@ -1,6 +1,7 @@
 #![allow(unused)]
 use crate::{ast::*, lexer::Token};
-use std::any::Any;
+
+const EOF_TOKEN: Token = Token::Eof;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum Binding {
@@ -106,7 +107,7 @@ impl ParseError {
 
 pub struct Parser {
     tokens: Vec<Token>,
-    //errors: Vec<ParseError>,
+    errors: Vec<ParseError>,
     current: usize,
     compatibility_diagnostics: Vec<CompatibilityDiagnostic>,
 }
@@ -115,7 +116,7 @@ impl Parser {
     pub fn new(tokens: Vec<Token>) -> Parser {
         Parser {
             tokens,
-            //errors: Vec::new(),
+            errors: Vec::new(),
             current: 0,
             compatibility_diagnostics: Vec::new(),
         }
@@ -130,6 +131,11 @@ impl Parser {
     }
 
     pub fn parse(&mut self) -> BlockStmt {
+        self.errors.clear();
+        self.parse_program()
+    }
+
+    fn parse_program(&mut self) -> BlockStmt {
         let mut stmts = Vec::new();
 
         while self.has_tokens() {
@@ -140,35 +146,28 @@ impl Parser {
     }
 
     pub fn parse_checked(&mut self) -> Result<BlockStmt, Vec<ParseError>> {
-        let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.parse()));
-        match parse_result {
-            Ok(ast) => Ok(ast),
-            Err(payload) => Err(vec![self.panic_payload_to_error(payload)]),
+        self.errors.clear();
+        let ast = self.parse_program();
+        if self.errors.is_empty() {
+            Ok(ast)
+        } else {
+            Err(std::mem::take(&mut self.errors))
         }
     }
 
-    fn panic_payload_to_error(&self, payload: Box<dyn Any + Send>) -> ParseError {
-        let message = if let Some(msg) = payload.downcast_ref::<String>() {
-            msg.clone()
-        } else if let Some(msg) = payload.downcast_ref::<&str>() {
-            (*msg).to_string()
-        } else {
-            "Unknown parser failure".to_string()
-        };
-
-        let token_index = self.current.min(self.tokens.len().saturating_sub(1));
-        let token = self.tokens.get(token_index).cloned();
-        ParseError::new(message, token_index, token)
-    }
-
     fn current_token(&self) -> &Token {
-        &self.tokens[self.current]
+        self.tokens.get(self.current).unwrap_or(&EOF_TOKEN)
     }
 
-    fn get_token_and_move(&mut self) -> &Token {
-        let token = &self.tokens[self.current];
-        //println!("{}", token);
-        self.current += 1;
+    fn get_token_and_move(&mut self) -> Token {
+        let token = self
+            .tokens
+            .get(self.current)
+            .cloned()
+            .unwrap_or(Token::Eof);
+        if self.current < self.tokens.len() {
+            self.current += 1;
+        }
         token
     }
 
@@ -176,11 +175,12 @@ impl Parser {
         self.current < self.tokens.len() && self.tokens[self.current] != Token::Eof
     }
 
-    fn expect(&mut self, expected: &Token) -> &Token {
-        let current = self.current_token();
+    fn expect(&mut self, expected: &Token) -> Token {
+        let current = self.current_token().clone();
 
-        if std::mem::discriminant(current) != std::mem::discriminant(expected) {
-            panic!("Expected {} but found {}", expected, current);
+        if std::mem::discriminant(&current) != std::mem::discriminant(expected) {
+            self.push_error(format!("Expected {} but found {}", expected, current));
+            return self.get_token_and_move();
         }
 
         self.get_token_and_move()
@@ -188,9 +188,18 @@ impl Parser {
 
     fn expect_identifier_get_name(&mut self) -> String {
         match self.expect(&Token::Identifier("any".to_string())) {
-            Token::Identifier(s) => s.to_string(),
-            _ => panic!("Token has no value"),
+            Token::Identifier(s) => s,
+            token => {
+                self.push_error(format!("Expected identifier token but found {}", token));
+                "".to_string()
+            }
         }
+    }
+
+    fn push_error(&mut self, message: impl Into<String>) {
+        let token_index = self.current.min(self.tokens.len().saturating_sub(1));
+        let token = self.tokens.get(token_index).cloned();
+        self.errors.push(ParseError::new(message, token_index, token));
     }
 
     fn is_next_token(&self, expected: &Token) -> bool {
@@ -218,9 +227,16 @@ impl Parser {
     }
 
     fn parse_expr(&mut self, binding: Binding) -> Expr {
-        let mut left = self
-            .handle_nud()
-            .unwrap_or_else(|| panic!("Unable to parse literal {}", self.current_token()));
+        let mut left = match self.handle_nud() {
+            Some(expr) => expr,
+            None => {
+                self.push_error(format!("Unable to parse literal {}", self.current_token()));
+                if self.current_token() != &Token::Semicolon {
+                    self.get_token_and_move();
+                }
+                Expr::Empty
+            }
+        };
 
         while self.get_current_token_power() > binding {
             left = self.handle_led(left);
@@ -254,18 +270,18 @@ impl Parser {
 
     fn parse_primary_expr(&mut self) -> Expr {
         match self.get_token_and_move() {
-            Token::Number(n) => Expr::Literal(Literal::Num(*n)),
+            Token::Number(n) => Expr::Literal(Literal::Num(n)),
             Token::True => Expr::Literal(Literal::Bool(true)),
             Token::False => Expr::Literal(Literal::Bool(false)),
             Token::None => Expr::Literal(Literal::Identifier("None".to_string())),
             Token::String(s) => Expr::Literal(Literal::String(s.to_string())),
-            Token::Char(c) => Expr::Literal(Literal::Char(*c)),
+            Token::Char(c) => Expr::Literal(Literal::Char(c)),
             Token::Identifier(i) => Expr::Literal(Literal::Identifier(i.to_string())),
             Token::This => Expr::Literal(Literal::This),
-            _ => panic!(
-                "No expression found for literal token {}",
-                self.current_token()
-            ),
+            token => {
+                self.push_error(format!("No expression found for literal token {}", token));
+                Expr::Empty
+            }
         }
     }
 
@@ -370,8 +386,8 @@ impl Parser {
                     let method = self.parse_pub_stmt();
                     let valid = matches!(&method, Stmt::Pub(pub_stmt) if matches!(pub_stmt.stmt.as_ref(), Stmt::Fun(_)));
                     if !valid {
-                        panic!(
-                            "Struct blocks can contain only field declarations and function methods"
+                        self.push_error(
+                            "Struct blocks can contain only field declarations and function methods",
                         );
                     }
                     methods.push(method);
@@ -388,9 +404,10 @@ impl Parser {
                     });
                 }
                 _ => {
-                    panic!(
-                        "Struct blocks can contain only field declarations and method declarations"
-                    )
+                    self.push_error(
+                        "Struct blocks can contain only field declarations and method declarations",
+                    );
+                    self.get_token_and_move();
                 }
             }
         }
@@ -598,7 +615,7 @@ impl Parser {
     }
 
     fn parse_member_exrp(&mut self, left: Expr) -> Expr {
-        let is_computed = self.get_token_and_move() == &Token::LeftBrace;
+        let is_computed = self.get_token_and_move() == Token::LeftBrace;
 
         if is_computed {
             let expr = self.parse_expr(Binding::Def);
@@ -648,7 +665,7 @@ impl Parser {
                 || matches!(&method, Stmt::Pub(pub_stmt) if matches!(pub_stmt.stmt.as_ref(), Stmt::Fun(_)));
 
             if !valid {
-                panic!("Impl blocks can contain only function declarations");
+                self.push_error("Impl blocks can contain only function declarations");
             }
 
             methods.push(method);
@@ -670,7 +687,11 @@ impl Parser {
             Token::Mod => self.parse_mod_stmt(),
             Token::Use => self.parse_use_stmt(),
             Token::Impl => self.parse_impl_stmt(),
-            _ => panic!("Unsupported token after 'pub': {}", self.current_token()),
+            _ => {
+                self.push_error(format!("Unsupported token after 'pub': {}", self.current_token()));
+                self.get_token_and_move();
+                Stmt::Empty
+            }
         };
 
         Stmt::Pub(PubStmt {
@@ -694,7 +715,10 @@ impl Parser {
             self.get_token_and_move();
             from = match self.expect(&Token::String("any".to_string())) {
                 Token::String(s) => s.to_string(),
-                _ => panic!("Incorrect import from value"),
+                token => {
+                    self.push_error(format!("Incorrect import from value: {}", token));
+                    "".to_string()
+                }
             }
         } else {
             from = import.clone();
@@ -779,21 +803,33 @@ impl Parser {
             Token::String(s) => {
                 let value = match self.get_token_and_move() {
                     Token::String(s) => s.to_string(),
-                    _ => unreachable!(),
+                    token => {
+                        self.push_error(format!("Expected string literal pattern, found {}", token));
+                        "".to_string()
+                    }
                 };
                 Pattern::Literal(Literal::String(value))
             }
             Token::Char(c) => {
                 let value = match self.get_token_and_move() {
-                    Token::Char(c) => *c,
-                    _ => unreachable!(),
+                    Token::Char(c) => c,
+                    token => {
+                        self.push_error(format!("Expected char literal pattern, found {}", token));
+                        '\0'
+                    }
                 };
                 Pattern::Literal(Literal::Char(value))
             }
             Token::Number(n) => {
                 let value = match self.get_token_and_move() {
-                    Token::Number(n) => *n,
-                    _ => unreachable!(),
+                    Token::Number(n) => n,
+                    token => {
+                        self.push_error(format!(
+                            "Expected numeric literal pattern, found {}",
+                            token
+                        ));
+                        0.0
+                    }
                 };
                 Pattern::Literal(Literal::Num(value))
             }
@@ -809,7 +845,11 @@ impl Parser {
                 self.expect(&Token::None);
                 Pattern::Identifier("None".to_string())
             }
-            _ => panic!("Unsupported pattern token {}", self.current_token()),
+            _ => {
+                self.push_error(format!("Unsupported pattern token {}", self.current_token()));
+                self.get_token_and_move();
+                Pattern::Wildcard
+            }
         }
     }
 
@@ -881,10 +921,14 @@ impl Parser {
             Token::LeftParen => Some(self.parse_group_expr()),
             Token::LeftBrace => Some(self.parse_array_literal_expr()),
             Token::Semicolon => None,
-            _ => panic!(
-                "No handler found for literal token {}",
-                self.current_token()
-            ),
+            _ => {
+                self.push_error(format!(
+                    "No handler found for literal token {}",
+                    self.current_token()
+                ));
+                self.get_token_and_move();
+                None
+            }
         }
     }
 
@@ -950,10 +994,14 @@ impl Parser {
             Token::LeftBrace => self.parse_member_exrp(left),
             Token::Dot => self.parse_member_exrp(left),
             Token::Question => self.parse_try_expr(left),
-            _ => panic!(
-                "No handler found for operator token {}",
-                self.current_token()
-            ),
+            _ => {
+                self.push_error(format!(
+                    "No handler found for operator token {}",
+                    self.current_token()
+                ));
+                self.get_token_and_move();
+                left
+            }
         }
     }
 
@@ -1012,7 +1060,7 @@ impl Parser {
 
         if self.current_token() == &Token::Less {
             if !matches!(t, Type::Identifier(_)) {
-                panic!("Generic type arguments are only allowed for identifier types");
+                self.push_error("Generic type arguments are only allowed for identifier types");
             }
 
             self.expect(&Token::Less);

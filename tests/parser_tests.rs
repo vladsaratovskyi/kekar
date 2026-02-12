@@ -878,6 +878,50 @@ mod tests {
     }
 
     #[test]
+    fn parse_checked_reports_invalid_pub_target_without_panicking() {
+        let tokens = vec![Token::Pub, Token::Semicolon, Token::Eof];
+
+        let mut parser = Parser::new(tokens);
+        let errors = parser
+            .parse_checked()
+            .expect_err("expected parser diagnostics");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Unsupported token after 'pub'")),
+            "expected unsupported pub target error, got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn parse_checked_reports_invalid_match_pattern_without_panicking() {
+        let tokens = vec![
+            Token::Match,
+            Token::Identifier("value".to_string()),
+            Token::LeftBracket,
+            Token::Else,
+            Token::FatArrow,
+            Token::Number(1.0),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let errors = parser
+            .parse_checked()
+            .expect_err("expected parser diagnostics");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Unsupported pattern token")),
+            "expected unsupported pattern error, got {errors:?}"
+        );
+    }
+
+    #[test]
     fn parse_generic_type_annotation_erases_to_base_identifier_type() {
         let tokens = vec![
             Token::Fun,
