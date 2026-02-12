@@ -64,4 +64,4 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] Add cross-module function symbol typing and resolution (not only member-call checks)
 - [x] Add callable visibility enforcement for cross-module function calls (`pub`/private)
 - [x] Add spec/implementation parity for currently frozen grammar features (generic type syntax, postfix `?`)
-- [ ] Add end-to-end backend tests that assemble/link/run generated ASM for representative programs
+- [x] Add end-to-end backend tests that assemble/link/run generated ASM for representative programs
