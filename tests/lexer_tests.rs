@@ -146,3 +146,25 @@ fn supports_legacy_keyword_logical_operators() {
 
     assert_eq!(tokens, vec![Token::And, Token::Or, Token::Eof]);
 }
+
+#[test]
+fn reports_unexpected_character_diagnostic() {
+    let mut lexer = Lexer::from_source("var a: Num = 1 @;");
+    let result = lexer.lex_with_diagnostics();
+
+    let errors = result.expect_err("expected lexer diagnostics");
+    assert!(errors
+        .iter()
+        .any(|error| error.message.contains("Unexpected character '@'")));
+}
+
+#[test]
+fn reports_unclosed_string_diagnostic() {
+    let mut lexer = Lexer::from_source("var s: String = \"oops;");
+    let result = lexer.lex_with_diagnostics();
+
+    let errors = result.expect_err("expected lexer diagnostics");
+    assert!(errors
+        .iter()
+        .any(|error| error.message.contains("Unclosed string literal")));
+}

@@ -412,12 +412,36 @@ fn parse_file_to_ast(path: &Path) -> Result<BlockStmt, SemanticError> {
     })?;
 
     let mut lexer = Lexer::from_source(source);
-    let tokens = lexer.lex_file();
-    let mut parser = Parser::new(tokens);
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parser.parse())).map_err(|_| {
+    let tokens = lexer.lex_with_diagnostics().map_err(|errors| {
+        let details = errors
+            .into_iter()
+            .map(|error| format!("{}:{}: {}", error.line, error.column, error.message))
+            .collect::<Vec<_>>()
+            .join("; ");
         SemanticError::new(format!(
-            "Failed to parse module '{}': parser panic",
-            path.display()
+            "Failed to lex module '{}': {}",
+            path.display(),
+            details
+        ))
+    })?;
+
+    let mut parser = Parser::new(tokens);
+    parser.parse_checked().map_err(|errors| {
+        let details = errors
+            .into_iter()
+            .map(|error| {
+                let near = error
+                    .token
+                    .map(|token| format!(" near {:?}", token))
+                    .unwrap_or_default();
+                format!("token #{}{}: {}", error.token_index, near, error.message)
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        SemanticError::new(format!(
+            "Failed to parse module '{}': {}",
+            path.display(),
+            details
         ))
     })
 }

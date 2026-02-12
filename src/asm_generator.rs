@@ -20,6 +20,7 @@ pub struct AsmGenerator {
     type_layouts: HashMap<String, TypeLayout>,
     method_sigs: HashMap<String, HashMap<String, MethodSig>>,
     class_initializers: HashMap<String, MethodSig>,
+    emitted_impl_metadata: BTreeSet<String>,
 }
 
 #[derive(Clone)]
@@ -61,6 +62,7 @@ impl AsmGenerator {
             type_layouts: HashMap::new(),
             method_sigs: HashMap::new(),
             class_initializers: HashMap::new(),
+            emitted_impl_metadata: BTreeSet::new(),
         }
     }
 
@@ -151,6 +153,7 @@ impl AsmGenerator {
         self.type_layouts.clear();
         self.method_sigs.clear();
         self.class_initializers.clear();
+        self.emitted_impl_metadata.clear();
         self.string_counter = 0;
         self.string_literals.clear();
         self.string_labels.clear();
@@ -429,10 +432,17 @@ impl AsmGenerator {
             self.emit_function(&lowered, text_lines);
         }
 
-        rodata_lines.push(format!("__kek_impl_{}:", impl_stmt.name));
-        rodata_lines.push(format!("    dq {}", method_labels.len()));
-        for method_label in method_labels {
-            rodata_lines.push(format!("    dq {}", method_label));
+        if self.emitted_impl_metadata.insert(impl_stmt.name.clone()) {
+            rodata_lines.push(format!("__kek_impl_{}:", impl_stmt.name));
+            rodata_lines.push(format!("    dq {}", method_labels.len()));
+            for method_label in method_labels {
+                rodata_lines.push(format!("    dq {}", method_label));
+            }
+        } else {
+            rodata_lines.push(format!(
+                "; duplicate impl metadata for '{}' skipped",
+                impl_stmt.name
+            ));
         }
     }
 
@@ -472,11 +482,18 @@ impl AsmGenerator {
 
         self.emit_struct_metadata(struct_stmt, rodata_lines);
         if !method_labels.is_empty() {
-            rodata_lines.push(format!(
-                "; struct '{}' defines {} inline method(s)",
-                struct_stmt.name,
-                method_labels.len()
-            ));
+            if self.emitted_impl_metadata.insert(struct_stmt.name.clone()) {
+                rodata_lines.push(format!("__kek_impl_{}:", struct_stmt.name));
+                rodata_lines.push(format!("    dq {}", method_labels.len()));
+                for method_label in method_labels {
+                    rodata_lines.push(format!("    dq {}", method_label));
+                }
+            } else {
+                rodata_lines.push(format!(
+                    "; duplicate impl metadata for '{}' skipped",
+                    struct_stmt.name
+                ));
+            }
         }
     }
 

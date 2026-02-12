@@ -92,6 +92,25 @@ impl Display for Token {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LexError {
+    pub message: String,
+    pub line: usize,
+    pub column: usize,
+    pub position: usize,
+}
+
+impl LexError {
+    fn new(message: impl Into<String>, line: usize, column: usize, position: usize) -> Self {
+        Self {
+            message: message.into(),
+            line,
+            column,
+            position,
+        }
+    }
+}
+
 fn get_keyword(key: &str) -> Option<Token> {
     match key {
         "var" => Some(Token::Var),
@@ -152,6 +171,7 @@ pub struct Lexer {
     start: usize,
     line: usize,
     source: String,
+    errors: Vec<LexError>,
 }
 
 impl Lexer {
@@ -161,6 +181,7 @@ impl Lexer {
             current: 0,
             start: 0,
             line: 0,
+            errors: Vec::new(),
         }
     }
 
@@ -170,7 +191,24 @@ impl Lexer {
             current: 0,
             start: 0,
             line: 0,
+            errors: Vec::new(),
         }
+    }
+
+    fn current_column(&self, position: usize) -> usize {
+        let position = position.min(self.source.len());
+        let slice = &self.source[..position];
+        match slice.rfind('\n') {
+            Some(last_newline) => position.saturating_sub(last_newline),
+            None => position + 1,
+        }
+    }
+
+    fn push_error_at(&mut self, message: impl Into<String>, position: usize) {
+        let line = self.line + 1;
+        let column = self.current_column(position);
+        self.errors
+            .push(LexError::new(message, line, column, position));
     }
 
     fn check_second_char(&mut self, char: char) -> bool {
@@ -228,7 +266,8 @@ impl Lexer {
         }
 
         if self.is_end() {
-            panic!("Unclosed String at {}!", self.current);
+            self.push_error_at("Unclosed string literal", self.current);
+            return None;
         }
 
         self.move_next();
@@ -249,7 +288,8 @@ impl Lexer {
             }
 
             if self.current == hex_start {
-                panic!("Expected hex digits at {}", self.current);
+                self.push_error_at("Expected hex digits after 0x prefix", self.current);
+                return None;
             }
 
             let value = i64::from_str_radix(&self.source[self.start + 2..self.current], 16)
@@ -285,7 +325,8 @@ impl Lexer {
 
     fn parse_char_literal(&mut self) -> Option<Token> {
         if self.is_end() {
-            panic!("Unclosed Char at {}!", self.current);
+            self.push_error_at("Unclosed char literal", self.current);
+            return None;
         }
 
         let value = if self.peek_char() == '\\' {
@@ -305,7 +346,8 @@ impl Lexer {
         };
 
         if self.peek_char() != '\'' {
-            panic!("Unclosed Char at {}!", self.current);
+            self.push_error_at("Unclosed char literal", self.current);
+            return None;
         }
         self.move_next();
 
@@ -326,7 +368,7 @@ impl Lexer {
             self.move_next();
         }
 
-        panic!("Unclosed block comment at {}", self.current);
+        self.push_error_at("Unclosed block comment", self.current);
     }
 
     fn scan_token(&mut self) -> Option<Token> {
@@ -445,6 +487,7 @@ impl Lexer {
             }
             '"' => self.parse_string(),
             '\'' => self.parse_char_literal(),
+            ' ' | '\r' | '\t' => None,
             '\n' => {
                 self.line += 1;
                 None
@@ -455,13 +498,19 @@ impl Lexer {
                 } else if is_letter(c) {
                     self.parse_word()
                 } else {
+                    self.push_error_at(format!("Unexpected character '{}'", c), self.start);
                     None
                 }
             }
         }
     }
 
-    pub fn lex_file(&mut self) -> Vec<Token> {
+    fn lex_internal(&mut self) -> Vec<Token> {
+        self.errors.clear();
+        self.current = 0;
+        self.start = 0;
+        self.line = 0;
+
         let mut tokens: Vec<Token> = Vec::new();
 
         while !self.is_end() {
@@ -474,5 +523,18 @@ impl Lexer {
 
         tokens.push(Token::Eof);
         tokens
+    }
+
+    pub fn lex_file(&mut self) -> Vec<Token> {
+        self.lex_internal()
+    }
+
+    pub fn lex_with_diagnostics(&mut self) -> Result<Vec<Token>, Vec<LexError>> {
+        let tokens = self.lex_internal();
+        if self.errors.is_empty() {
+            Ok(tokens)
+        } else {
+            Err(self.errors.clone())
+        }
     }
 }

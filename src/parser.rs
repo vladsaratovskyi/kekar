@@ -1,6 +1,6 @@
 #![allow(unused)]
 use crate::{ast::*, lexer::Token};
-use core::panic;
+use std::any::Any;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 enum Binding {
@@ -87,6 +87,23 @@ pub fn render_compatibility_diagnostic(diag: &CompatibilityDiagnostic) -> String
     )
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParseError {
+    pub message: String,
+    pub token_index: usize,
+    pub token: Option<Token>,
+}
+
+impl ParseError {
+    fn new(message: impl Into<String>, token_index: usize, token: Option<Token>) -> Self {
+        Self {
+            message: message.into(),
+            token_index,
+            token,
+        }
+    }
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     //errors: Vec<ParseError>,
@@ -120,6 +137,28 @@ impl Parser {
         }
 
         BlockStmt { stmts }
+    }
+
+    pub fn parse_checked(&mut self) -> Result<BlockStmt, Vec<ParseError>> {
+        let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.parse()));
+        match parse_result {
+            Ok(ast) => Ok(ast),
+            Err(payload) => Err(vec![self.panic_payload_to_error(payload)]),
+        }
+    }
+
+    fn panic_payload_to_error(&self, payload: Box<dyn Any + Send>) -> ParseError {
+        let message = if let Some(msg) = payload.downcast_ref::<String>() {
+            msg.clone()
+        } else if let Some(msg) = payload.downcast_ref::<&str>() {
+            (*msg).to_string()
+        } else {
+            "Unknown parser failure".to_string()
+        };
+
+        let token_index = self.current.min(self.tokens.len().saturating_sub(1));
+        let token = self.tokens.get(token_index).cloned();
+        ParseError::new(message, token_index, token)
     }
 
     fn current_token(&self) -> &Token {

@@ -55,7 +55,7 @@ Last updated for commit: `df2789e` + self-host audit
 
 ## Stage 7: Self-host blocker closure (post ASM-only audit)
 - [x] Wire compiler entrypoint to workspace-level analysis/linking before ASM generation (`analyze_workspace` path)
-- [ ] Replace panic-based lexer/parser failures with structured diagnostics and non-zero exits
+- [x] Replace panic-based lexer/parser failures with structured diagnostics and non-zero exits
 - [x] Implement ASM lowering for runtime-critical values (`String`, arrays, `this`, member access, computed access)
 - [x] Implement ASM lowering for dynamic/member calls and method dispatch used by struct/impl/class code
 - [x] Implement loop control lowering (`break`, `continue`) with correct label/stack semantics

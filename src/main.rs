@@ -62,10 +62,36 @@ fn main() {
     }
 
     let mut lexer = Lexer::new(&path);
-    let tokens = lexer.lex_file();
+    let tokens = match lexer.lex_with_diagnostics() {
+        Ok(tokens) => tokens,
+        Err(errors) => {
+            for error in errors {
+                eprintln!(
+                    "{}:{}:{}: {}",
+                    path, error.line, error.column, error.message
+                );
+            }
+            std::process::exit(1);
+        }
+    };
 
     let mut parser = Parser::new(tokens);
-    let ast = parser.parse();
+    let ast = match parser.parse_checked() {
+        Ok(ast) => ast,
+        Err(errors) => {
+            for error in errors {
+                let near = error
+                    .token
+                    .map(|token| format!(" near {:?}", token))
+                    .unwrap_or_default();
+                eprintln!(
+                    "{}: parser error at token #{}{}: {}",
+                    path, error.token_index, near, error.message
+                );
+            }
+            std::process::exit(1);
+        }
+    };
     for diagnostic in parser.take_compatibility_diagnostics() {
         eprintln!("{}", render_compatibility_diagnostic(&diagnostic));
     }

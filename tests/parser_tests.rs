@@ -852,4 +852,28 @@ mod tests {
 
         assert_eq!(result, expected);
     }
+
+    #[test]
+    fn parse_checked_returns_structured_error() {
+        let tokens = vec![
+            Token::Fun,
+            Token::Identifier("main".to_string()),
+            Token::LeftParen,
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Number(1.0),
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let errors = parser
+            .parse_checked()
+            .expect_err("expected parser diagnostics");
+
+        assert!(!errors.is_empty(), "expected at least one parser error");
+        assert!(errors[0].message.contains("Expected"));
+    }
 }
