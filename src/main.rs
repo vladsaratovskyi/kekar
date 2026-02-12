@@ -1,6 +1,11 @@
 use std::env;
 
-use kekar::{asm_generator::AsmGenerator, generator::JsGenerator, lexer::Lexer, parser::Parser};
+use kekar::{
+    asm_generator::AsmGenerator,
+    generator::JsGenerator,
+    lexer::Lexer,
+    parser::{render_compatibility_diagnostic, Parser},
+};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -45,6 +50,9 @@ fn main() {
 
     let mut parser = Parser::new(tokens);
     let ast = parser.parse();
+    for diagnostic in parser.take_compatibility_diagnostics() {
+        eprintln!("{}", render_compatibility_diagnostic(&diagnostic));
+    }
 
     let output = match target.as_str() {
         "js" => JsGenerator::new().generate(&ast),

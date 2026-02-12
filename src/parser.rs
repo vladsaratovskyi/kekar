@@ -19,10 +19,79 @@ enum Binding {
     Primary,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompatibilityWarningKind {
+    LegacyParamStyle,
+    LegacyReturnStyle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompatibilityDiagnostic {
+    pub kind: CompatibilityWarningKind,
+    pub message: String,
+    pub hint: String,
+}
+
+impl CompatibilityDiagnostic {
+    fn legacy_param_style(param_name: &str, param_type: &Type) -> Self {
+        let canonical_type = format_type_for_hint(param_type);
+        Self {
+            kind: CompatibilityWarningKind::LegacyParamStyle,
+            message: format!(
+                "Legacy parameter syntax 'Type name' is deprecated for '{}'",
+                param_name
+            ),
+            hint: format!("Use canonical syntax '{}: {}'", param_name, canonical_type),
+        }
+    }
+
+    fn legacy_return_style(fun_name: &str, return_type: &Type) -> Self {
+        let canonical_type = format_type_for_hint(return_type);
+        Self {
+            kind: CompatibilityWarningKind::LegacyReturnStyle,
+            message: format!(
+                "Legacy return syntax ': Type' is deprecated for function '{}'",
+                fun_name
+            ),
+            hint: format!(
+                "Use canonical syntax '-> {}' for '{}'",
+                canonical_type, fun_name
+            ),
+        }
+    }
+}
+
+fn format_type_for_hint(ty: &Type) -> String {
+    match ty {
+        Type::Num => "Num".to_string(),
+        Type::Char => "Char".to_string(),
+        Type::Byte => "Byte".to_string(),
+        Type::String => "String".to_string(),
+        Type::Bool => "Bool".to_string(),
+        Type::Void => "Void".to_string(),
+        Type::Identifier(name) => name.clone(),
+        Type::Array(inner) => format!("{}[]", format_type_for_hint(inner)),
+        Type::None => "None".to_string(),
+    }
+}
+
+pub fn render_compatibility_diagnostic(diag: &CompatibilityDiagnostic) -> String {
+    let (code, label) = match diag.kind {
+        CompatibilityWarningKind::LegacyParamStyle => ("KEK-COMPAT-001", "legacy parameter syntax"),
+        CompatibilityWarningKind::LegacyReturnStyle => ("KEK-COMPAT-002", "legacy return syntax"),
+    };
+
+    format!(
+        "[warning][{}] {}. Hint: {}. Compatibility window ends 2026-09-30.",
+        code, label, diag.hint
+    )
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     //errors: Vec<ParseError>,
     current: usize,
+    compatibility_diagnostics: Vec<CompatibilityDiagnostic>,
 }
 
 impl Parser {
@@ -31,7 +100,16 @@ impl Parser {
             tokens,
             //errors: Vec::new(),
             current: 0,
+            compatibility_diagnostics: Vec::new(),
         }
+    }
+
+    pub fn compatibility_diagnostics(&self) -> &[CompatibilityDiagnostic] {
+        &self.compatibility_diagnostics
+    }
+
+    pub fn take_compatibility_diagnostics(&mut self) -> Vec<CompatibilityDiagnostic> {
+        std::mem::take(&mut self.compatibility_diagnostics)
     }
 
     pub fn parse(&mut self) -> BlockStmt {
@@ -392,6 +470,10 @@ impl Parser {
         } else if self.current_token() == &Token::Colon {
             self.expect(&Token::Colon);
             fun_type = self.parse_type();
+            self.compatibility_diagnostics
+                .push(CompatibilityDiagnostic::legacy_return_style(
+                    &fun_name, &fun_type,
+                ));
         }
 
         let block = self.parse_block_stmt();
@@ -416,6 +498,11 @@ impl Parser {
         // Legacy compatibility: Type name
         let param_type = self.parse_type();
         let name = self.expect_identifier_get_name();
+        self.compatibility_diagnostics
+            .push(CompatibilityDiagnostic::legacy_param_style(
+                &name,
+                &param_type,
+            ));
         Param { name, param_type }
     }
 
@@ -864,7 +951,7 @@ mod tests {
     use crate::{
         ast::*,
         lexer::Token,
-        parser::{Binding, Parser},
+        parser::{render_compatibility_diagnostic, Binding, CompatibilityWarningKind, Parser},
     };
 
     #[test]
@@ -1689,5 +1776,117 @@ mod tests {
         });
 
         assert_eq!(res, expected);
+    }
+
+    #[test]
+    fn legacy_param_syntax_emits_compat_warning_with_hint() {
+        let tokens = vec![
+            Token::Fun,
+            Token::Identifier("main".to_string()),
+            Token::LeftParen,
+            Token::Identifier("Num".to_string()),
+            Token::Identifier("value".to_string()),
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Identifier("value".to_string()),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let _ = parser.parse();
+
+        assert_eq!(parser.compatibility_diagnostics().len(), 1);
+        let warning = &parser.compatibility_diagnostics()[0];
+        assert_eq!(warning.kind, CompatibilityWarningKind::LegacyParamStyle);
+        assert!(warning.hint.contains("value: Num"));
+    }
+
+    #[test]
+    fn legacy_return_syntax_emits_compat_warning_with_hint() {
+        let tokens = vec![
+            Token::Fun,
+            Token::Identifier("main".to_string()),
+            Token::LeftParen,
+            Token::RightParen,
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Number(1.0),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let _ = parser.parse();
+
+        assert_eq!(parser.compatibility_diagnostics().len(), 1);
+        let warning = &parser.compatibility_diagnostics()[0];
+        assert_eq!(warning.kind, CompatibilityWarningKind::LegacyReturnStyle);
+        assert!(warning.hint.contains("-> Num"));
+    }
+
+    #[test]
+    fn render_compat_warning_includes_window_and_hint() {
+        let tokens = vec![
+            Token::Fun,
+            Token::Identifier("main".to_string()),
+            Token::LeftParen,
+            Token::Identifier("Num".to_string()),
+            Token::Identifier("value".to_string()),
+            Token::RightParen,
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Identifier("value".to_string()),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let _ = parser.parse();
+        let rendered = parser
+            .compatibility_diagnostics()
+            .iter()
+            .map(render_compatibility_diagnostic)
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered.len(), 2);
+        assert!(rendered.iter().all(|line| line.contains("2026-09-30")));
+        assert!(rendered.iter().any(|line| line.contains("KEK-COMPAT-001")));
+        assert!(rendered.iter().any(|line| line.contains("KEK-COMPAT-002")));
+    }
+
+    #[test]
+    fn canonical_signature_emits_no_compat_warning() {
+        let tokens = vec![
+            Token::Fun,
+            Token::Identifier("main".to_string()),
+            Token::LeftParen,
+            Token::Identifier("value".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Identifier("value".to_string()),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let _ = parser.parse();
+        assert!(parser.compatibility_diagnostics().is_empty());
     }
 }
