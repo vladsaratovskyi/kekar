@@ -5,7 +5,12 @@ use std::{
 };
 
 use crate::{
-    ast::{BlockStmt, Expr, FunStmt, ImportStmt, Literal, MatchStmt, Pattern, Stmt, Type, UseStmt},
+    ast::{
+        ArrayExpr, BlockStmt, CallExpr, ClassStmt, ComputedExpr, ConstStmt, EnumStmt, Expr,
+        ExprStmt, ForStmt, FunStmt, IfStmt, ImplStmt, ImportStmt, Literal, MatchArm, MatchStmt,
+        MemberExpr, Pattern, PubStmt, ReturnStmt, Stmt, StructStmt, Type, UseStmt, VarStmt,
+        WhileStmt,
+    },
     lexer::Lexer,
     parser::Parser,
     sema::{SemanticAnalyzer, SemanticError},
@@ -115,17 +120,45 @@ enum ValueType {
 }
 
 pub fn analyze_workspace(entry_path: impl AsRef<Path>) -> Result<(), Vec<SemanticError>> {
+    let (linker, entry_module) = load_workspace(entry_path.as_ref())?;
+    let errors = collect_workspace_errors(&linker.modules, &entry_module, linker.errors);
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+pub fn build_workspace_program(entry_path: impl AsRef<Path>) -> Result<BlockStmt, Vec<SemanticError>> {
+    let (linker, entry_module) = load_workspace(entry_path.as_ref())?;
+    let errors = collect_workspace_errors(&linker.modules, &entry_module, linker.errors);
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
+    Ok(link_workspace_program(&linker.modules, &entry_module))
+}
+
+fn load_workspace(entry_path: &Path) -> Result<(WorkspaceLinker, PathBuf), Vec<SemanticError>> {
     let mut linker = WorkspaceLinker::new();
-    let Some(entry_module) = linker.load_entry(entry_path.as_ref()) else {
+    let Some(entry_module) = linker.load_entry(entry_path) else {
         return Err(linker.errors);
     };
 
-    let mut errors = linker.errors;
-    let mut module_paths = linker.modules.keys().cloned().collect::<Vec<_>>();
+    Ok((linker, entry_module))
+}
+
+fn collect_workspace_errors(
+    modules: &HashMap<PathBuf, LinkedModule>,
+    entry_module: &Path,
+    mut errors: Vec<SemanticError>,
+) -> Vec<SemanticError> {
+    let mut module_paths = modules.keys().cloned().collect::<Vec<_>>();
     module_paths.sort();
 
     for module_path in &module_paths {
-        let Some(module) = linker.modules.get(module_path) else {
+        let Some(module) = modules.get(module_path) else {
             continue;
         };
 
@@ -141,12 +174,12 @@ pub fn analyze_workspace(entry_path: impl AsRef<Path>) -> Result<(), Vec<Semanti
     }
 
     for module_path in &module_paths {
-        let Some(module) = linker.modules.get(module_path) else {
+        let Some(module) = modules.get(module_path) else {
             continue;
         };
 
         for use_path in &module.uses {
-            if let Err(message) = resolve_use_path(&linker.modules, module, &entry_module, use_path)
+            if let Err(message) = resolve_use_path(modules, module, entry_module, use_path)
             {
                 errors.push(SemanticError::new(format!(
                     "{}: {}",
@@ -158,14 +191,13 @@ pub fn analyze_workspace(entry_path: impl AsRef<Path>) -> Result<(), Vec<Semanti
     }
 
     let (type_index, module_type_namespaces, type_errors) =
-        build_type_index(&linker.modules, &entry_module);
+        build_type_index(modules, entry_module);
     errors.extend(type_errors);
 
-    let (function_index, module_function_namespaces) =
-        build_function_index(&linker.modules, &entry_module);
+    let (function_index, module_function_namespaces) = build_function_index(modules, entry_module);
 
     let method_errors = validate_module_method_calls(
-        &linker.modules,
+        modules,
         &type_index,
         &module_type_namespaces,
         &function_index,
@@ -173,11 +205,488 @@ pub fn analyze_workspace(entry_path: impl AsRef<Path>) -> Result<(), Vec<Semanti
     );
     errors.extend(method_errors);
 
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
+    errors
+}
+
+fn link_workspace_program(modules: &HashMap<PathBuf, LinkedModule>, entry_module: &Path) -> BlockStmt {
+    let (function_index, module_function_namespaces) = build_function_index(modules, entry_module);
+
+    let mut module_paths = modules.keys().cloned().collect::<Vec<_>>();
+    module_paths.sort();
+
+    let module_order = module_paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| (path.clone(), index))
+        .collect::<HashMap<_, _>>();
+
+    let mut function_symbols = HashMap::<FunctionKey, String>::new();
+    let mut function_keys = function_index.keys().cloned().collect::<Vec<_>>();
+    function_keys.sort_by(|left, right| {
+        left.module
+            .cmp(&right.module)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    for key in function_keys {
+        function_symbols.insert(
+            key.clone(),
+            lower_function_symbol(&key, entry_module, &module_order),
+        );
     }
+
+    let mut stmts = Vec::new();
+    for module_path in module_paths {
+        let Some(module) = modules.get(&module_path) else {
+            continue;
+        };
+        let module_function_namespace = module_function_namespaces
+            .get(&module_path)
+            .cloned()
+            .unwrap_or_default();
+        for stmt in &module.ast.stmts {
+            stmts.push(rewrite_stmt_for_workspace_codegen(
+                stmt,
+                module,
+                &module_function_namespace,
+                &module_function_namespaces,
+                &function_symbols,
+                true,
+            ));
+        }
+    }
+
+    BlockStmt { stmts }
+}
+
+fn lower_function_symbol(
+    function_key: &FunctionKey,
+    entry_module: &Path,
+    module_order: &HashMap<PathBuf, usize>,
+) -> String {
+    if function_key.module == entry_module && function_key.name == "main" {
+        return "main".to_string();
+    }
+
+    let module_index = module_order
+        .get(&function_key.module)
+        .copied()
+        .unwrap_or_default();
+    format!("__kek_m{}_{}", module_index, function_key.name)
+}
+
+fn rewrite_stmt_for_workspace_codegen(
+    stmt: &Stmt,
+    module: &LinkedModule,
+    module_function_namespace: &HashMap<String, FunctionKey>,
+    module_function_namespaces: &HashMap<PathBuf, HashMap<String, FunctionKey>>,
+    function_symbols: &HashMap<FunctionKey, String>,
+    rename_top_level_functions: bool,
+) -> Stmt {
+    match stmt {
+        Stmt::Block(block) => Stmt::Block(BlockStmt {
+            stmts: block
+                .stmts
+                .iter()
+                .map(|stmt| {
+                    rewrite_stmt_for_workspace_codegen(
+                        stmt,
+                        module,
+                        module_function_namespace,
+                        module_function_namespaces,
+                        function_symbols,
+                        false,
+                    )
+                })
+                .collect(),
+        }),
+        Stmt::Expr(expr_stmt) => Stmt::Expr(ExprStmt {
+            expr: rewrite_expr_for_workspace_codegen(
+                &expr_stmt.expr,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            ),
+        }),
+        Stmt::Pub(pub_stmt) => Stmt::Pub(PubStmt {
+            stmt: Box::new(rewrite_stmt_for_workspace_codegen(
+                pub_stmt.stmt.as_ref(),
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+                rename_top_level_functions,
+            )),
+        }),
+        Stmt::Var(var_stmt) => Stmt::Var(VarStmt {
+            name: var_stmt.name.clone(),
+            assignment: rewrite_expr_for_workspace_codegen(
+                &var_stmt.assignment,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            ),
+            var_type: var_stmt.var_type.clone(),
+        }),
+        Stmt::Const(const_stmt) => Stmt::Const(ConstStmt {
+            name: const_stmt.name.clone(),
+            assignment: rewrite_expr_for_workspace_codegen(
+                &const_stmt.assignment,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            ),
+            const_type: const_stmt.const_type.clone(),
+        }),
+        Stmt::Struct(struct_stmt) => Stmt::Struct(StructStmt {
+            name: struct_stmt.name.clone(),
+            fields: struct_stmt.fields.clone(),
+            methods: struct_stmt
+                .methods
+                .iter()
+                .map(|method| {
+                    rewrite_stmt_for_workspace_codegen(
+                        method,
+                        module,
+                        module_function_namespace,
+                        module_function_namespaces,
+                        function_symbols,
+                        false,
+                    )
+                })
+                .collect(),
+        }),
+        Stmt::Enum(enum_stmt) => Stmt::Enum(EnumStmt {
+            name: enum_stmt.name.clone(),
+            variants: enum_stmt.variants.clone(),
+        }),
+        Stmt::Impl(impl_stmt) => Stmt::Impl(ImplStmt {
+            name: impl_stmt.name.clone(),
+            methods: impl_stmt
+                .methods
+                .iter()
+                .map(|method| {
+                    rewrite_stmt_for_workspace_codegen(
+                        method,
+                        module,
+                        module_function_namespace,
+                        module_function_namespaces,
+                        function_symbols,
+                        false,
+                    )
+                })
+                .collect(),
+        }),
+        Stmt::If(if_stmt) => Stmt::If(IfStmt {
+            condition: rewrite_expr_for_workspace_codegen(
+                &if_stmt.condition,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            ),
+            then_block: Box::new(rewrite_stmt_for_workspace_codegen(
+                if_stmt.then_block.as_ref(),
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+                false,
+            )),
+            else_block: Box::new(rewrite_stmt_for_workspace_codegen(
+                if_stmt.else_block.as_ref(),
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+                false,
+            )),
+        }),
+        Stmt::Match(match_stmt) => Stmt::Match(MatchStmt {
+            expr: rewrite_expr_for_workspace_codegen(
+                &match_stmt.expr,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            ),
+            arms: match_stmt
+                .arms
+                .iter()
+                .map(|arm| MatchArm {
+                    pattern: arm.pattern.clone(),
+                    body: Box::new(rewrite_stmt_for_workspace_codegen(
+                        arm.body.as_ref(),
+                        module,
+                        module_function_namespace,
+                        module_function_namespaces,
+                        function_symbols,
+                        false,
+                    )),
+                })
+                .collect(),
+        }),
+        Stmt::While(while_stmt) => Stmt::While(WhileStmt {
+            condition: rewrite_expr_for_workspace_codegen(
+                &while_stmt.condition,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            ),
+            body: Box::new(rewrite_stmt_for_workspace_codegen(
+                while_stmt.body.as_ref(),
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+                false,
+            )),
+        }),
+        Stmt::For(for_stmt) => Stmt::For(ForStmt {
+            item: for_stmt.item.clone(),
+            index: for_stmt.index.clone(),
+            iterator: rewrite_expr_for_workspace_codegen(
+                &for_stmt.iterator,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            ),
+            body: Box::new(rewrite_stmt_for_workspace_codegen(
+                for_stmt.body.as_ref(),
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+                false,
+            )),
+        }),
+        Stmt::Fun(fun_stmt) => {
+            let mut rewritten = FunStmt {
+                name: fun_stmt.name.clone(),
+                return_type: fun_stmt.return_type.clone(),
+                params: fun_stmt.params.clone(),
+                block: Box::new(rewrite_stmt_for_workspace_codegen(
+                    fun_stmt.block.as_ref(),
+                    module,
+                    module_function_namespace,
+                    module_function_namespaces,
+                    function_symbols,
+                    false,
+                )),
+            };
+
+            if rename_top_level_functions {
+                if let Some(symbol) = resolve_function_symbol_in_namespace(
+                    &fun_stmt.name,
+                    module_function_namespace,
+                    function_symbols,
+                ) {
+                    rewritten.name = symbol;
+                }
+            }
+
+            Stmt::Fun(rewritten)
+        }
+        Stmt::Class(class_stmt) => Stmt::Class(ClassStmt {
+            name: class_stmt.name.clone(),
+            block: Box::new(rewrite_stmt_for_workspace_codegen(
+                class_stmt.block.as_ref(),
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+                false,
+            )),
+        }),
+        Stmt::Return(return_stmt) => Stmt::Return(ReturnStmt {
+            return_expr: rewrite_expr_for_workspace_codegen(
+                &return_stmt.return_expr,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            ),
+        }),
+        _ => stmt.clone(),
+    }
+}
+
+fn rewrite_expr_for_workspace_codegen(
+    expr: &Expr,
+    module: &LinkedModule,
+    module_function_namespace: &HashMap<String, FunctionKey>,
+    module_function_namespaces: &HashMap<PathBuf, HashMap<String, FunctionKey>>,
+    function_symbols: &HashMap<FunctionKey, String>,
+) -> Expr {
+    match expr {
+        Expr::Unary(token, right) => Expr::Unary(
+            token.clone(),
+            Box::new(rewrite_expr_for_workspace_codegen(
+                right,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            )),
+        ),
+        Expr::Binary(left, token, right) => Expr::Binary(
+            Box::new(rewrite_expr_for_workspace_codegen(
+                left,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            )),
+            token.clone(),
+            Box::new(rewrite_expr_for_workspace_codegen(
+                right,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            )),
+        ),
+        Expr::Assignment(left, right) => Expr::Assignment(
+            Box::new(rewrite_expr_for_workspace_codegen(
+                left,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            )),
+            Box::new(rewrite_expr_for_workspace_codegen(
+                right,
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            )),
+        ),
+        Expr::Call(call) => {
+            let rewritten_args = call
+                .arguments
+                .iter()
+                .map(|arg| {
+                    rewrite_expr_for_workspace_codegen(
+                        arg,
+                        module,
+                        module_function_namespace,
+                        module_function_namespaces,
+                        function_symbols,
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            if let Expr::Literal(Literal::Identifier(name)) = call.callee.as_ref() {
+                if let Some(symbol) = resolve_function_symbol_in_namespace(
+                    name,
+                    module_function_namespace,
+                    function_symbols,
+                ) {
+                    return Expr::Call(CallExpr {
+                        callee: Box::new(Expr::Literal(Literal::Identifier(symbol))),
+                        arguments: rewritten_args,
+                    });
+                }
+            }
+
+            if let Expr::Mebmer(member) = call.callee.as_ref() {
+                if let Some(symbol) = resolve_module_qualified_function_symbol(
+                    module,
+                    member,
+                    module_function_namespaces,
+                    function_symbols,
+                ) {
+                    return Expr::Call(CallExpr {
+                        callee: Box::new(Expr::Literal(Literal::Identifier(symbol))),
+                        arguments: rewritten_args,
+                    });
+                }
+            }
+
+            Expr::Call(CallExpr {
+                callee: Box::new(rewrite_expr_for_workspace_codegen(
+                    call.callee.as_ref(),
+                    module,
+                    module_function_namespace,
+                    module_function_namespaces,
+                    function_symbols,
+                )),
+                arguments: rewritten_args,
+            })
+        }
+        Expr::Mebmer(member) => Expr::Mebmer(MemberExpr {
+            member: Box::new(rewrite_expr_for_workspace_codegen(
+                member.member.as_ref(),
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            )),
+            property: member.property.clone(),
+        }),
+        Expr::ComputedExpr(computed) => Expr::ComputedExpr(ComputedExpr {
+            member: Box::new(rewrite_expr_for_workspace_codegen(
+                computed.member.as_ref(),
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            )),
+            property: Box::new(rewrite_expr_for_workspace_codegen(
+                computed.property.as_ref(),
+                module,
+                module_function_namespace,
+                module_function_namespaces,
+                function_symbols,
+            )),
+        }),
+        Expr::Array(array) => Expr::Array(ArrayExpr {
+            array: array
+                .array
+                .iter()
+                .map(|item| {
+                    rewrite_expr_for_workspace_codegen(
+                        item,
+                        module,
+                        module_function_namespace,
+                        module_function_namespaces,
+                        function_symbols,
+                    )
+                })
+                .collect(),
+        }),
+        _ => expr.clone(),
+    }
+}
+
+fn resolve_function_symbol_in_namespace(
+    function_name: &str,
+    module_function_namespace: &HashMap<String, FunctionKey>,
+    function_symbols: &HashMap<FunctionKey, String>,
+) -> Option<String> {
+    let function_key = module_function_namespace.get(function_name)?;
+    function_symbols.get(function_key).cloned()
+}
+
+fn resolve_module_qualified_function_symbol(
+    module: &LinkedModule,
+    member: &MemberExpr,
+    module_function_namespaces: &HashMap<PathBuf, HashMap<String, FunctionKey>>,
+    function_symbols: &HashMap<FunctionKey, String>,
+) -> Option<String> {
+    let Expr::Literal(Literal::Identifier(binding_name)) = member.member.as_ref() else {
+        return None;
+    };
+
+    let target_module = module.bindings.get(binding_name)?.target.clone();
+    let target_namespace = module_function_namespaces.get(&target_module)?;
+    let function_key = target_namespace.get(&member.property)?;
+    function_symbols.get(function_key).cloned()
 }
 
 struct WorkspaceLinker {

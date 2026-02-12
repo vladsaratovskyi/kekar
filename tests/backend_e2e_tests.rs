@@ -1,11 +1,13 @@
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{self, Command},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use kekar::{asm_generator::AsmGenerator, lexer::Lexer, parser::Parser};
+use kekar::{
+    asm_generator::AsmGenerator, lexer::Lexer, parser::Parser, workspace::build_workspace_program,
+};
 
 fn temp_workspace(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -49,6 +51,59 @@ fn compile_asm_and_run(source: &str, name: &str) -> Result<i32, String> {
     let ast = parser
         .parse_checked()
         .map_err(|errors| format!("parse errors: {errors:?}"))?;
+
+    let asm = AsmGenerator::new().generate(&ast);
+    let root = temp_workspace(name);
+    let asm_path = root.join("program.asm");
+    let obj_path = root.join("program.o");
+    let exe_path = root.join("program.out");
+    fs::write(&asm_path, asm).map_err(|error| format!("write asm failed: {error}"))?;
+
+    let nasm = Command::new("nasm")
+        .arg("-f")
+        .arg("elf64")
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&obj_path)
+        .output()
+        .map_err(|error| format!("failed to execute nasm: {error}"))?;
+    if !nasm.status.success() {
+        return Err(format!(
+            "nasm failed: {}",
+            String::from_utf8_lossy(&nasm.stderr)
+        ));
+    }
+
+    let ld = Command::new("ld")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&obj_path)
+        .output()
+        .map_err(|error| format!("failed to execute ld: {error}"))?;
+    if !ld.status.success() {
+        return Err(format!(
+            "ld failed: {}",
+            String::from_utf8_lossy(&ld.stderr)
+        ));
+    }
+
+    let run = Command::new(&exe_path)
+        .output()
+        .map_err(|error| format!("failed to run executable: {error}"))?;
+
+    fs::remove_dir_all(root).ok();
+    Ok(run.status.code().unwrap_or(-1))
+}
+
+fn compile_workspace_entry_and_run(entry: &Path, name: &str) -> Result<i32, String> {
+    let ast = build_workspace_program(entry).map_err(|errors| {
+        let rendered = errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect::<Vec<_>>()
+            .join("; ");
+        format!("workspace errors: {rendered}")
+    })?;
 
     let asm = AsmGenerator::new().generate(&ast);
     let root = temp_workspace(name);
@@ -178,4 +233,44 @@ fun main() -> Num {
     .expect("assemble/link/run should succeed");
 
     assert_eq!(code, 5);
+}
+
+#[test]
+fn backend_e2e_runs_cross_module_import_function_call() {
+    if let Err(reason) = ensure_backend_e2e_runtime() {
+        eprintln!("skipping backend e2e test: {reason}");
+        return;
+    }
+
+    let source_root = temp_workspace("workspace-module-call-src");
+    let entry = source_root.join("main.kek");
+    let util = source_root.join("util.kek");
+
+    fs::write(
+        &entry,
+        r#"
+import Util from "./util.kek";
+
+fun main() -> Num {
+    return Util.add(2, 3);
+}
+"#,
+    )
+    .expect("should write entry source");
+
+    fs::write(
+        &util,
+        r#"
+pub fun add(a: Num, b: Num) -> Num {
+    return a + b;
+}
+"#,
+    )
+    .expect("should write util source");
+
+    let code = compile_workspace_entry_and_run(&entry, "workspace-module-call")
+        .expect("workspace assemble/link/run should succeed");
+
+    assert_eq!(code, 5);
+    fs::remove_dir_all(source_root).ok();
 }

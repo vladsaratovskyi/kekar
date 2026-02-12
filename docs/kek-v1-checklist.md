@@ -1,7 +1,7 @@
 # Kek v1 Implementation Checklist
 
 Status date: `2026-02-12`  
-Last updated for commit: `df2789e` + self-host audit
+Last updated for commit: `ff76448` + readiness reevaluation
 
 ## Stage 1: Freeze grammar + compatibility rules
 - [x] Freeze v1 grammar and compatibility contract in `/Users/vlad/workspace/rusty/kekar/docs/kek-v1.md`
@@ -54,7 +54,7 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] Bootstrap milestone: compile a non-trivial Kek program in Kek (self-host stage-0 target)
 
 ## Stage 7: Self-host blocker closure (post ASM-only audit)
-- [x] Wire compiler entrypoint to workspace-level analysis/linking before ASM generation (`analyze_workspace` path)
+- [x] Wire compiler entrypoint to workspace-level semantic preflight before ASM generation (`analyze_workspace` path)
 - [x] Replace panic-based lexer/parser failures with structured diagnostics and non-zero exits
 - [x] Implement ASM lowering for runtime-critical values (`String`, arrays, `this`, member access, computed access)
 - [x] Implement ASM lowering for dynamic/member calls and method dispatch used by struct/impl/class code
@@ -65,3 +65,12 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] Add callable visibility enforcement for cross-module function calls (`pub`/private)
 - [x] Add spec/implementation parity for currently frozen grammar features (generic type syntax, postfix `?`)
 - [x] Add end-to-end backend tests that assemble/link/run generated ASM for representative programs
+
+## Stage 8: Reopened blockers after self-host readiness reevaluation
+- [x] Emit workspace-linked ASM across all loaded modules (not only entry-file AST)
+- [x] Lower module-qualified calls (`Module.fun(...)`) to executable call targets in ASM backend
+- [ ] Enforce spec-required short-circuit semantics for `&&` and `||` in ASM lowering
+- [ ] Replace remaining parser-internal panic paths with structured parser errors (no panic/catch control flow)
+- [ ] Implement semantic/runtime representation for generic types beyond parse-only consumption
+- [x] Add backend e2e coverage for multi-file cross-module execution (assemble/link/run path)
+- [ ] Run backend e2e in a supported CI/runtime target (linux x86_64) instead of skip-only on unsupported hosts

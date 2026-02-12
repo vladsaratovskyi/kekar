@@ -5,7 +5,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use kekar::workspace::analyze_workspace;
+use kekar::{
+    ast::{Expr, Literal, Stmt},
+    workspace::{analyze_workspace, build_workspace_program},
+};
 
 fn temp_workspace(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -494,6 +497,83 @@ fun main() -> Num {
 
     let result = analyze_workspace(&entry);
     assert!(result.is_ok(), "Expected no workspace errors: {result:?}");
+
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}
+
+#[test]
+fn workspace_builds_linked_program_for_module_qualified_function_call() {
+    let root = temp_workspace("build-linked-program-module-call");
+    let entry = root.join("main.kek");
+    let util = root.join("util.kek");
+
+    write_file(
+        &entry,
+        r#"
+import Util from "./util.kek";
+
+fun main() -> Num {
+    return Util.add(2, 3);
+}
+"#,
+    );
+
+    write_file(
+        &util,
+        r#"
+pub fun add(a: Num, b: Num) -> Num {
+    return a + b;
+}
+"#,
+    );
+
+    let linked = build_workspace_program(&entry).expect("workspace linking should succeed");
+    let function_names = linked
+        .stmts
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Fun(fun_stmt) => Some(fun_stmt.name.as_str()),
+            Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                Stmt::Fun(fun_stmt) => Some(fun_stmt.name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        function_names.iter().any(|name| *name == "main"),
+        "expected linked workspace program to include entry main, got: {function_names:?}"
+    );
+    assert!(
+        function_names
+            .iter()
+            .any(|name| name.starts_with("__kek_m") && name.ends_with("_add")),
+        "expected linked workspace program to include lowered util.add symbol, got: {function_names:?}"
+    );
+
+    let main_call = linked.stmts.iter().find_map(|stmt| match stmt {
+        Stmt::Fun(fun_stmt) if fun_stmt.name == "main" => match fun_stmt.block.as_ref() {
+            Stmt::Block(block) => block.stmts.iter().find_map(|stmt| match stmt {
+                Stmt::Return(return_stmt) => match &return_stmt.return_expr {
+                    Expr::Call(call) => Some(call.callee.as_ref()),
+                    _ => None,
+                },
+                _ => None,
+            }),
+            _ => None,
+        },
+        _ => None,
+    });
+
+    let callee = main_call.expect("main should return a call expression");
+    match callee {
+        Expr::Literal(Literal::Identifier(name)) => {
+            assert!(name.starts_with("__kek_m"));
+            assert!(name.ends_with("_add"));
+        }
+        other => panic!("expected lowered direct identifier call, got {other:?}"),
+    }
 
     fs::remove_dir_all(root).expect("should clean test workspace");
 }

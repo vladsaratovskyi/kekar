@@ -1,11 +1,6 @@
 use std::env;
 
-use kekar::{
-    asm_generator::AsmGenerator,
-    lexer::Lexer,
-    parser::{render_compatibility_diagnostic, Parser},
-    workspace::analyze_workspace,
-};
+use kekar::{asm_generator::AsmGenerator, workspace::build_workspace_program};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -54,46 +49,19 @@ fn main() {
         std::process::exit(2);
     };
 
-    if let Err(errors) = analyze_workspace(&path) {
-        for error in errors {
-            eprintln!("{}", error.message);
+    let ast = match build_workspace_program(&path) {
+        Ok(program) => program,
+        Err(errors) => {
+            for error in errors {
+                eprintln!("{}", error.message);
+            }
+            std::process::exit(1);
         }
+    };
+
+    if ast.stmts.is_empty() {
+        eprintln!("No code was generated from workspace '{}'", path);
         std::process::exit(1);
-    }
-
-    let mut lexer = Lexer::new(&path);
-    let tokens = match lexer.lex_with_diagnostics() {
-        Ok(tokens) => tokens,
-        Err(errors) => {
-            for error in errors {
-                eprintln!(
-                    "{}:{}:{}: {}",
-                    path, error.line, error.column, error.message
-                );
-            }
-            std::process::exit(1);
-        }
-    };
-
-    let mut parser = Parser::new(tokens);
-    let ast = match parser.parse_checked() {
-        Ok(ast) => ast,
-        Err(errors) => {
-            for error in errors {
-                let near = error
-                    .token
-                    .map(|token| format!(" near {:?}", token))
-                    .unwrap_or_default();
-                eprintln!(
-                    "{}: parser error at token #{}{}: {}",
-                    path, error.token_index, near, error.message
-                );
-            }
-            std::process::exit(1);
-        }
-    };
-    for diagnostic in parser.take_compatibility_diagnostics() {
-        eprintln!("{}", render_compatibility_diagnostic(&diagnostic));
     }
 
     let output = AsmGenerator::new().generate(&ast);
