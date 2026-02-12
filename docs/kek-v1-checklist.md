@@ -1,7 +1,7 @@
 # Kek v1 Implementation Checklist
 
-Status date: `2026-02-11`  
-Last updated for commit: `working tree (uncommitted)`
+Status date: `2026-02-12`  
+Last updated for commit: `df2789e` + self-host audit
 
 ## Stage 1: Freeze grammar + compatibility rules
 - [x] Freeze v1 grammar and compatibility contract in `/Users/vlad/workspace/rusty/kekar/docs/kek-v1.md`
@@ -47,7 +47,20 @@ Last updated for commit: `working tree (uncommitted)`
 - [x] Core frontend pipeline (lexer/parser/sema) supports v1 declaration surface needed by a compiler frontend codebase
 - [x] Real multi-file module loading and path-based symbol resolution (filesystem-backed, cross-file linking)
 - [x] Namespace-aware method call resolution for impl methods and visibility across module boundaries
-- [x] Full user-type semantics needed for bootstrap-scale code (constructor/value typing strategy, richer class/enum runtime model)
+- [ ] Full user-type semantics needed for bootstrap-scale code (constructor/value typing strategy, richer class/enum runtime model)
 - [x] Compatibility diagnostics policy implemented in compiler output (warnings + migration hints)
-- [x] Backend lowering support for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable ASM output
+- [ ] Backend lowering support for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable ASM output
 - [ ] Bootstrap milestone: compile a non-trivial Kek program in Kek (self-host stage-0 target)
+
+## Stage 7: Self-host blocker closure (post ASM-only audit)
+- [x] Wire compiler entrypoint to workspace-level analysis/linking before ASM generation (`analyze_workspace` path)
+- [ ] Replace panic-based lexer/parser failures with structured diagnostics and non-zero exits
+- [x] Implement ASM lowering for runtime-critical values (`String`, arrays, `this`, member access, computed access)
+- [x] Implement ASM lowering for dynamic/member calls and method dispatch used by impl/class code
+- [x] Implement loop control lowering (`break`, `continue`) with correct label/stack semantics
+- [x] Implement non-literal iterator lowering for `for` (not just compile-time array unroll)
+- [ ] Complete match lowering for enum payload pattern checks and payload bindings
+- [ ] Add cross-module function symbol typing and resolution (not only member-call checks)
+- [ ] Add callable visibility enforcement for cross-module function calls (`pub`/private)
+- [ ] Add spec/implementation parity for currently frozen grammar features (generic type syntax, postfix `?`)
+- [ ] Add end-to-end backend tests that assemble/link/run generated ASM for representative programs

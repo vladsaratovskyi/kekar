@@ -67,7 +67,7 @@ fun main(): Num {
 }
 
 #[test]
-fn unrolls_for_loop_over_literal_array_with_index() {
+fn lowers_for_loop_over_literal_array_with_index() {
     let source = r#"
 fun main(): Num {
     var acc: Num = 0;
@@ -80,10 +80,10 @@ fun main(): Num {
 
     let output = compile_to_asm(source);
 
-    assert!(output.contains("; unrolled loop iteration 0"));
-    assert!(output.contains("; unrolled loop iteration 1"));
-    assert!(output.contains("mov rax, 0"));
-    assert!(output.contains("mov rax, 1"));
+    assert!(output.contains(".for_loop_"));
+    assert!(output.contains("cmp rcx, QWORD [rbx]"));
+    assert!(output.contains("mov rax, QWORD [rbx + rcx*8 + 8]"));
+    assert!(output.contains("mov rax, rcx"));
 }
 
 #[test]
@@ -138,4 +138,76 @@ fun main(): Num {
     assert!(output.contains("__kek_enum_Maybe:"));
     assert!(output.contains("__kek_impl_Point:"));
     assert!(output.contains("__kek_enum_Maybe_Some:"));
+}
+
+#[test]
+fn lowers_member_access_and_member_method_call() {
+    let source = r#"
+struct Point {
+    value: Num;
+}
+
+impl Point {
+    fun get() -> Num {
+        return this.value;
+    }
+}
+
+fun main() -> Num {
+    var p: Point = Point(42);
+    return p.get();
+}
+"#;
+
+    let output = compile_to_asm(source);
+
+    assert!(output.contains("Point__get:"));
+    assert!(output.contains("mov rdi,"));
+    assert!(output.contains("call Point__get"));
+    assert!(!output.contains("member access unsupported in asm backend"));
+    assert!(!output.contains("dynamic/member call unsupported in asm backend"));
+}
+
+#[test]
+fn lowers_string_and_array_literals() {
+    let source = r#"
+fun main() -> Num {
+    var s: String = "hello";
+    var arr: Num[] = [1, 2, 3];
+    return arr[1];
+}
+"#;
+
+    let output = compile_to_asm(source);
+
+    assert!(output.contains("__kek_str_0:"));
+    assert!(output.contains("lea rax, [rel __kek_str_0]"));
+    assert!(output.contains("call __kek_alloc"));
+    assert!(output.contains("mov rax, QWORD [rbx + rcx*8 + 8]"));
+}
+
+#[test]
+fn lowers_break_and_continue_inside_loop() {
+    let source = r#"
+fun main() -> Num {
+    var sum: Num = 0;
+    for item in [1, 2, 3] {
+        if item == 2 {
+            continue;
+        }
+        if item == 3 {
+            break;
+        }
+        sum = sum + item;
+    }
+    return sum;
+}
+"#;
+
+    let output = compile_to_asm(source);
+
+    assert!(output.contains(".for_continue_"));
+    assert!(output.contains(".for_end_"));
+    assert!(!output.contains("break is not implemented in asm backend"));
+    assert!(!output.contains("continue is not implemented in asm backend"));
 }

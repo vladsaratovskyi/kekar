@@ -2,35 +2,105 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::{
     ast::{
-        BlockStmt, ConstStmt, EnumStmt, Expr, ForStmt, FunStmt, IfStmt, Literal, MatchStmt,
-        Pattern, Stmt, StructStmt, VarStmt, WhileStmt,
+        BlockStmt, ClassStmt, ConstStmt, EnumStmt, Expr, ForStmt, FunStmt, IfStmt, Literal,
+        MatchStmt, Param, Pattern, Stmt, StructStmt, Type, VarStmt, WhileStmt,
     },
     lexer::Token,
 };
 
 pub struct AsmGenerator {
     label_counter: usize,
+    string_counter: usize,
+    string_literals: Vec<(String, String)>,
+    string_labels: HashMap<String, String>,
     enum_variant_tags: HashMap<String, i64>,
+    enum_variant_types: HashMap<String, String>,
+    function_returns: HashMap<String, Type>,
+    type_layouts: HashMap<String, TypeLayout>,
+    method_sigs: HashMap<String, HashMap<String, MethodSig>>,
+    class_initializers: HashMap<String, MethodSig>,
+}
+
+#[derive(Clone)]
+struct FieldLayout {
+    offset: i64,
+    ty: Type,
+}
+
+#[derive(Clone)]
+struct TypeLayout {
+    field_order: Vec<String>,
+    fields: HashMap<String, FieldLayout>,
+}
+
+#[derive(Clone)]
+struct MethodSig {
+    label: String,
+    params: Vec<Type>,
+    return_type: Type,
+}
+
+#[derive(Clone)]
+struct LoopLabels {
+    break_label: String,
+    continue_label: String,
 }
 
 impl AsmGenerator {
     pub fn new() -> Self {
         Self {
             label_counter: 0,
+            string_counter: 0,
+            string_literals: Vec::new(),
+            string_labels: HashMap::new(),
             enum_variant_tags: HashMap::new(),
+            enum_variant_types: HashMap::new(),
+            function_returns: HashMap::new(),
+            type_layouts: HashMap::new(),
+            method_sigs: HashMap::new(),
+            class_initializers: HashMap::new(),
         }
     }
 
     pub fn generate(&mut self, program: &BlockStmt) -> String {
-        self.enum_variant_tags = self.collect_enum_variant_tags(program);
+        self.prepare_program_metadata(program);
 
         let mut text_lines = vec![
             "section .text".to_string(),
             "    global _start".to_string(),
             String::new(),
+            "__kek_runtime_init:".to_string(),
+            "    lea rax, [rel __kek_heap]".to_string(),
+            "    mov [rel __kek_heap_ptr], rax".to_string(),
+            "    ret".to_string(),
+            String::new(),
+            "__kek_alloc:".to_string(),
+            "    mov rax, [rel __kek_heap_ptr]".to_string(),
+            "    mov rcx, rax".to_string(),
+            "    add rcx, rdi".to_string(),
+            "    lea rdx, [rel __kek_heap_end]".to_string(),
+            "    cmp rcx, rdx".to_string(),
+            "    jg __kek_alloc_oom".to_string(),
+            "    mov [rel __kek_heap_ptr], rcx".to_string(),
+            "    ret".to_string(),
+            String::new(),
+            "__kek_alloc_oom:".to_string(),
+            "    mov rax, 60".to_string(),
+            "    mov rdi, 70".to_string(),
+            "    syscall".to_string(),
+            String::new(),
             "_start:".to_string(),
         ];
         let mut rodata_lines = vec!["section .rodata".to_string()];
+        let mut bss_lines = vec![
+            "section .bss".to_string(),
+            "    align 8".to_string(),
+            "__kek_heap:".to_string(),
+            "    resb 1048576".to_string(),
+            "__kek_heap_end:".to_string(),
+            "__kek_heap_ptr:".to_string(),
+            "    resq 1".to_string(),
+        ];
 
         let has_main = program.stmts.iter().any(|stmt| match stmt {
             Stmt::Fun(fun) => fun.name == "main",
@@ -40,6 +110,7 @@ impl AsmGenerator {
             _ => false,
         });
 
+        text_lines.push("    call __kek_runtime_init".to_string());
         if has_main {
             text_lines.push("    call main".to_string());
             text_lines.push("    mov rdi, rax".to_string());
@@ -55,12 +126,208 @@ impl AsmGenerator {
             self.emit_top_level_stmt(stmt, &mut text_lines, &mut rodata_lines);
         }
 
+        self.emit_string_literals(&mut rodata_lines);
+
         if rodata_lines.len() > 1 {
             text_lines.push(String::new());
             text_lines.append(&mut rodata_lines);
         }
 
+        if bss_lines.len() > 1 {
+            text_lines.push(String::new());
+            text_lines.append(&mut bss_lines);
+        }
+
         text_lines.join("\n")
+    }
+
+    fn prepare_program_metadata(&mut self, program: &BlockStmt) {
+        self.enum_variant_tags = self.collect_enum_variant_tags(program);
+        self.enum_variant_types.clear();
+        self.function_returns.clear();
+        self.type_layouts.clear();
+        self.method_sigs.clear();
+        self.class_initializers.clear();
+        self.string_counter = 0;
+        self.string_literals.clear();
+        self.string_labels.clear();
+
+        for stmt in &program.stmts {
+            let inner = match stmt {
+                Stmt::Pub(pub_stmt) => pub_stmt.stmt.as_ref(),
+                other => other,
+            };
+
+            match inner {
+                Stmt::Fun(fun_stmt) => {
+                    self.function_returns
+                        .insert(fun_stmt.name.clone(), fun_stmt.return_type.clone());
+                }
+                Stmt::Enum(enum_stmt) => {
+                    for variant in &enum_stmt.variants {
+                        self.enum_variant_types
+                            .insert(variant.name.clone(), enum_stmt.name.clone());
+                    }
+                }
+                Stmt::Struct(struct_stmt) => {
+                    self.type_layouts.insert(
+                        struct_stmt.name.clone(),
+                        self.layout_from_struct(struct_stmt),
+                    );
+                }
+                Stmt::Class(class_stmt) => {
+                    self.type_layouts
+                        .insert(class_stmt.name.clone(), self.layout_from_class(class_stmt));
+                    self.collect_class_methods(class_stmt);
+                }
+                Stmt::Impl(impl_stmt) => {
+                    self.collect_impl_methods(impl_stmt);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn layout_from_struct(&self, struct_stmt: &StructStmt) -> TypeLayout {
+        let mut fields = HashMap::new();
+        let mut field_order = Vec::new();
+        for (index, field) in struct_stmt.fields.iter().enumerate() {
+            field_order.push(field.name.clone());
+            fields.insert(
+                field.name.clone(),
+                FieldLayout {
+                    offset: (index as i64) * 8,
+                    ty: field.field_type.clone(),
+                },
+            );
+        }
+
+        TypeLayout {
+            field_order,
+            fields,
+        }
+    }
+
+    fn layout_from_class(&self, class_stmt: &ClassStmt) -> TypeLayout {
+        let mut fields = HashMap::new();
+        let mut field_order = Vec::new();
+        let members = match class_stmt.block.as_ref() {
+            Stmt::Block(block) => &block.stmts,
+            _ => {
+                return TypeLayout {
+                    field_order,
+                    fields,
+                }
+            }
+        };
+
+        for member in members {
+            let member = match member {
+                Stmt::Pub(pub_stmt) => pub_stmt.stmt.as_ref(),
+                other => other,
+            };
+
+            if let Stmt::Var(var_stmt) = member {
+                let offset = (field_order.len() as i64) * 8;
+                field_order.push(var_stmt.name.clone());
+                fields.insert(
+                    var_stmt.name.clone(),
+                    FieldLayout {
+                        offset,
+                        ty: var_stmt.var_type.clone(),
+                    },
+                );
+            }
+        }
+
+        TypeLayout {
+            field_order,
+            fields,
+        }
+    }
+
+    fn collect_impl_methods(&mut self, impl_stmt: &crate::ast::ImplStmt) {
+        let methods = self.method_sigs.entry(impl_stmt.name.clone()).or_default();
+        for method in &impl_stmt.methods {
+            let method = match method {
+                Stmt::Pub(pub_stmt) => pub_stmt.stmt.as_ref(),
+                other => other,
+            };
+
+            let Stmt::Fun(fun_stmt) = method else {
+                continue;
+            };
+            methods.insert(
+                fun_stmt.name.clone(),
+                MethodSig {
+                    label: format!("{}__{}", impl_stmt.name, fun_stmt.name),
+                    params: fun_stmt
+                        .params
+                        .iter()
+                        .map(|param| param.param_type.clone())
+                        .collect(),
+                    return_type: fun_stmt.return_type.clone(),
+                },
+            );
+        }
+    }
+
+    fn collect_class_methods(&mut self, class_stmt: &ClassStmt) {
+        let methods = self.method_sigs.entry(class_stmt.name.clone()).or_default();
+        let members = match class_stmt.block.as_ref() {
+            Stmt::Block(block) => &block.stmts,
+            _ => return,
+        };
+
+        for member in members {
+            let member = match member {
+                Stmt::Pub(pub_stmt) => pub_stmt.stmt.as_ref(),
+                other => other,
+            };
+
+            let Stmt::Fun(fun_stmt) = member else {
+                continue;
+            };
+
+            let sig = MethodSig {
+                label: format!("{}__{}", class_stmt.name, fun_stmt.name),
+                params: fun_stmt
+                    .params
+                    .iter()
+                    .map(|param| param.param_type.clone())
+                    .collect(),
+                return_type: fun_stmt.return_type.clone(),
+            };
+            if fun_stmt.name == "init" {
+                self.class_initializers
+                    .insert(class_stmt.name.clone(), sig.clone());
+            }
+            methods.insert(fun_stmt.name.clone(), sig);
+        }
+    }
+
+    fn emit_string_literals(&mut self, rodata_lines: &mut Vec<String>) {
+        if self.string_literals.is_empty() {
+            return;
+        }
+
+        for (label, value) in &self.string_literals {
+            rodata_lines.push(format!("{}:", label));
+            rodata_lines.push(format!("    db {}, 0", escape_asm_string(value)));
+        }
+    }
+
+    fn intern_string_literal(&mut self, value: &str) -> String {
+        if let Some(label) = self.string_labels.get(value) {
+            return label.clone();
+        }
+
+        let label = format!("__kek_str_{}", self.string_counter);
+        self.string_counter += 1;
+        self.string_labels.insert(value.to_string(), label.clone());
+        self.string_literals
+            .push((label.clone(), value.to_string()));
+        label
     }
 
     fn emit_top_level_stmt(
@@ -79,9 +346,7 @@ impl AsmGenerator {
             }
             Stmt::Mod(_) => text_lines.push("; mod statement ignored by asm backend".to_string()),
             Stmt::Use(_) => text_lines.push("; use statement ignored by asm backend".to_string()),
-            Stmt::Class(_) => {
-                text_lines.push("; class statement ignored by asm backend".to_string())
-            }
+            Stmt::Class(class_stmt) => self.emit_class(class_stmt, text_lines, rodata_lines),
             Stmt::Const(_) => {
                 text_lines.push("; top-level const ignored by asm backend".to_string())
             }
@@ -118,11 +383,75 @@ impl AsmGenerator {
 
             let mut lowered = fun_stmt.clone();
             lowered.name = format!("{}__{}", impl_stmt.name, fun_stmt.name);
+            lowered.params.insert(
+                0,
+                Param {
+                    name: "this".to_string(),
+                    param_type: Type::Identifier(impl_stmt.name.clone()),
+                },
+            );
             method_labels.push(lowered.name.clone());
             self.emit_function(&lowered, text_lines);
         }
 
         rodata_lines.push(format!("__kek_impl_{}:", impl_stmt.name));
+        rodata_lines.push(format!("    dq {}", method_labels.len()));
+        for method_label in method_labels {
+            rodata_lines.push(format!("    dq {}", method_label));
+        }
+    }
+
+    fn emit_class(
+        &mut self,
+        class_stmt: &ClassStmt,
+        text_lines: &mut Vec<String>,
+        rodata_lines: &mut Vec<String>,
+    ) {
+        let mut method_labels = Vec::new();
+        let members = match class_stmt.block.as_ref() {
+            Stmt::Block(block) => &block.stmts,
+            _ => {
+                text_lines.push(format!(
+                    "; class '{}' body is not a block in asm backend",
+                    class_stmt.name
+                ));
+                return;
+            }
+        };
+
+        for member in members {
+            let method = match member {
+                Stmt::Pub(pub_stmt) => pub_stmt.stmt.as_ref(),
+                other => other,
+            };
+
+            let Stmt::Fun(fun_stmt) = method else {
+                continue;
+            };
+
+            let mut lowered = fun_stmt.clone();
+            lowered.name = format!("{}__{}", class_stmt.name, fun_stmt.name);
+            lowered.params.insert(
+                0,
+                Param {
+                    name: "this".to_string(),
+                    param_type: Type::Identifier(class_stmt.name.clone()),
+                },
+            );
+            method_labels.push(lowered.name.clone());
+            self.emit_function(&lowered, text_lines);
+        }
+
+        rodata_lines.push(format!("__kek_class_{}:", class_stmt.name));
+        if let Some(layout) = self.type_layouts.get(&class_stmt.name) {
+            rodata_lines.push(format!("    dq {}", layout.field_order.len()));
+            for field_name in &layout.field_order {
+                rodata_lines.push(format!("    dq 0 ; field {}", field_name));
+            }
+        } else {
+            rodata_lines.push("    dq 0".to_string());
+        }
+        rodata_lines.push(format!("__kek_class_impl_{}:", class_stmt.name));
         rodata_lines.push(format!("    dq {}", method_labels.len()));
         for method_label in method_labels {
             rodata_lines.push(format!("    dq {}", method_label));
@@ -174,8 +503,10 @@ impl AsmGenerator {
 
     fn emit_function(&mut self, fun_stmt: &FunStmt, lines: &mut Vec<String>) {
         let mut local_names = BTreeSet::new();
+        let mut var_types = HashMap::new();
         for param in &fun_stmt.params {
             local_names.insert(param.name.clone());
+            var_types.insert(param.name.clone(), param.param_type.clone());
         }
         collect_locals(fun_stmt.block.as_ref(), &mut local_names);
 
@@ -189,12 +520,18 @@ impl AsmGenerator {
         let epilogue_label = self.new_label(&format!("{}_epilogue", fun_stmt.name));
         let mut ctx = FunctionContext {
             var_offsets,
+            var_types,
             epilogue_label: epilogue_label.clone(),
+            loop_stack: Vec::new(),
         };
 
         lines.push(format!("{}:", fun_stmt.name));
         lines.push("    push rbp".to_string());
         lines.push("    mov rbp, rsp".to_string());
+        lines.push("    push rbx".to_string());
+        lines.push("    push r12".to_string());
+        lines.push("    push r13".to_string());
+        lines.push("    push r14".to_string());
         if offset > 0 {
             lines.push(format!("    sub rsp, {}", offset));
         }
@@ -217,7 +554,13 @@ impl AsmGenerator {
 
         lines.push("    mov rax, 0".to_string());
         lines.push(format!("{}:", epilogue_label));
-        lines.push("    mov rsp, rbp".to_string());
+        if offset > 0 {
+            lines.push(format!("    add rsp, {}", offset));
+        }
+        lines.push("    pop r14".to_string());
+        lines.push("    pop r13".to_string());
+        lines.push("    pop r12".to_string());
+        lines.push("    pop rbx".to_string());
         lines.push("    pop rbp".to_string());
         lines.push("    ret".to_string());
         lines.push(String::new());
@@ -239,12 +582,14 @@ impl AsmGenerator {
             Stmt::While(while_stmt) => self.emit_while(while_stmt, ctx, lines),
             Stmt::For(for_stmt) => self.emit_for(for_stmt, ctx, lines),
             Stmt::Match(match_stmt) => self.emit_match(match_stmt, ctx, lines),
-            Stmt::Break(_) => {
-                lines.push("    ; break is not implemented in asm backend".to_string())
-            }
-            Stmt::Continue(_) => {
-                lines.push("    ; continue is not implemented in asm backend".to_string())
-            }
+            Stmt::Break(_) => match ctx.loop_stack.last() {
+                Some(loop_labels) => lines.push(format!("    jmp {}", loop_labels.break_label)),
+                None => lines.push("    ; break outside loop".to_string()),
+            },
+            Stmt::Continue(_) => match ctx.loop_stack.last() {
+                Some(loop_labels) => lines.push(format!("    jmp {}", loop_labels.continue_label)),
+                None => lines.push("    ; continue outside loop".to_string()),
+            },
             Stmt::Return(return_stmt) => {
                 if matches!(return_stmt.return_expr, Expr::Empty) {
                     lines.push("    mov rax, 0".to_string());
@@ -267,6 +612,13 @@ impl AsmGenerator {
     }
 
     fn emit_var(&mut self, var_stmt: &VarStmt, ctx: &mut FunctionContext, lines: &mut Vec<String>) {
+        let inferred_type = if matches!(var_stmt.var_type, Type::None) {
+            self.infer_expr_type(&var_stmt.assignment, ctx)
+        } else {
+            var_stmt.var_type.clone()
+        };
+        ctx.var_types.insert(var_stmt.name.clone(), inferred_type);
+
         if matches!(var_stmt.assignment, Expr::Empty) {
             return;
         }
@@ -289,6 +641,13 @@ impl AsmGenerator {
         ctx: &mut FunctionContext,
         lines: &mut Vec<String>,
     ) {
+        let inferred_type = if matches!(const_stmt.const_type, Type::None) {
+            self.infer_expr_type(&const_stmt.assignment, ctx)
+        } else {
+            const_stmt.const_type.clone()
+        };
+        ctx.var_types.insert(const_stmt.name.clone(), inferred_type);
+
         self.emit_expr(&const_stmt.assignment, ctx, lines);
 
         if let Some(offset) = ctx.var_offsets.get(&const_stmt.name) {
@@ -332,34 +691,56 @@ impl AsmGenerator {
         lines.push("    cmp rax, 0".to_string());
         lines.push(format!("    je {}", end_label));
 
+        ctx.loop_stack.push(LoopLabels {
+            break_label: end_label.clone(),
+            continue_label: loop_label.clone(),
+        });
         self.emit_stmt(while_stmt.body.as_ref(), ctx, lines);
+        ctx.loop_stack.pop();
         lines.push(format!("    jmp {}", loop_label));
         lines.push(format!("{}:", end_label));
     }
 
     fn emit_for(&mut self, for_stmt: &ForStmt, ctx: &mut FunctionContext, lines: &mut Vec<String>) {
-        let Expr::Array(array_expr) = &for_stmt.iterator else {
-            lines.push("    ; unsupported for-loop iterator in asm backend".to_string());
-            return;
-        };
+        let loop_label = self.new_label("for_loop");
+        let continue_label = self.new_label("for_continue");
+        let end_label = self.new_label("for_end");
 
-        for (index, value_expr) in array_expr.array.iter().enumerate() {
-            lines.push(format!("    ; unrolled loop iteration {}", index));
-            self.emit_expr(value_expr, ctx, lines);
+        self.emit_expr(&for_stmt.iterator, ctx, lines);
+        lines.push("    push rax ; for iterator array".to_string());
+        lines.push("    push 0 ; for iterator index".to_string());
+        lines.push(format!("{}:", loop_label));
+        lines.push("    mov rcx, QWORD [rsp]".to_string());
+        lines.push("    mov rbx, QWORD [rsp+8]".to_string());
+        lines.push("    cmp rcx, QWORD [rbx]".to_string());
+        lines.push(format!("    jge {}", end_label));
+        lines.push("    mov rax, QWORD [rbx + rcx*8 + 8]".to_string());
 
-            if let Some(item_offset) = ctx.var_offsets.get(&for_stmt.item) {
-                lines.push(format!("    mov QWORD [rbp-{}], rax", item_offset));
-            }
-
-            if let Some(index_name) = &for_stmt.index {
-                if let Some(index_offset) = ctx.var_offsets.get(index_name) {
-                    lines.push(format!("    mov rax, {}", index));
-                    lines.push(format!("    mov QWORD [rbp-{}], rax", index_offset));
-                }
-            }
-
-            self.emit_stmt(for_stmt.body.as_ref(), ctx, lines);
+        if let Some(item_offset) = ctx.var_offsets.get(&for_stmt.item) {
+            lines.push(format!("    mov QWORD [rbp-{}], rax", item_offset));
         }
+
+        if let Some(index_name) = &for_stmt.index {
+            if let Some(index_offset) = ctx.var_offsets.get(index_name) {
+                lines.push("    mov rax, rcx".to_string());
+                lines.push(format!("    mov QWORD [rbp-{}], rax", index_offset));
+            }
+        }
+
+        ctx.loop_stack.push(LoopLabels {
+            break_label: end_label.clone(),
+            continue_label: continue_label.clone(),
+        });
+        self.emit_stmt(for_stmt.body.as_ref(), ctx, lines);
+        ctx.loop_stack.pop();
+
+        lines.push(format!("{}:", continue_label));
+        lines.push("    mov rcx, QWORD [rsp]".to_string());
+        lines.push("    add rcx, 1".to_string());
+        lines.push("    mov QWORD [rsp], rcx".to_string());
+        lines.push(format!("    jmp {}", loop_label));
+        lines.push(format!("{}:", end_label));
+        lines.push("    add rsp, 16".to_string());
     }
 
     fn emit_match(
@@ -567,56 +948,140 @@ impl AsmGenerator {
                     _ => lines.push("    ; unsupported binary operator".to_string()),
                 }
             }
-            Expr::Assignment(left, right) => {
-                self.emit_expr(right, ctx, lines);
+            Expr::Assignment(left, right) => match left.as_ref() {
+                Expr::Literal(Literal::Identifier(name)) => {
+                    self.emit_expr(right, ctx, lines);
+                    if let Some(offset) = ctx.var_offsets.get(name) {
+                        lines.push(format!("    mov QWORD [rbp-{}], rax", offset));
+                        if let Some(existing) = ctx.var_types.get(name).cloned() {
+                            if matches!(existing, Type::None) {
+                                ctx.var_types
+                                    .insert(name.clone(), self.infer_expr_type(right, ctx));
+                            }
+                        }
+                    } else {
+                        lines.push(format!(
+                            "    ; assignment target '{}' not found in local slots",
+                            name
+                        ));
+                    }
+                }
+                Expr::Mebmer(member) => {
+                    let owner_type = self.infer_expr_type(member.member.as_ref(), ctx);
+                    self.emit_expr(member.member.as_ref(), ctx, lines);
+                    lines.push("    push rax".to_string());
+                    self.emit_expr(right, ctx, lines);
+                    lines.push("    mov rcx, rax".to_string());
+                    lines.push("    pop rbx".to_string());
 
-                match left.as_ref() {
-                    Expr::Literal(Literal::Identifier(name)) => {
-                        if let Some(offset) = ctx.var_offsets.get(name) {
-                            lines.push(format!("    mov QWORD [rbp-{}], rax", offset));
+                    if let Type::Identifier(type_name) = owner_type {
+                        if let Some(offset) = self.field_offset(&type_name, &member.property) {
+                            lines.push(format!("    mov QWORD [rbx+{}], rcx", offset));
+                            lines.push("    mov rax, rcx".to_string());
                         } else {
                             lines.push(format!(
-                                "    ; assignment target '{}' not found in local slots",
-                                name
+                                "    ; unknown member '{}.{}' in asm backend",
+                                type_name, member.property
                             ));
+                            lines.push("    mov rax, rcx".to_string());
                         }
-                    }
-                    _ => lines.push("    ; unsupported assignment target".to_string()),
-                }
-            }
-            Expr::Call(call) => {
-                let registers = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
-                for (index, arg) in call.arguments.iter().enumerate() {
-                    self.emit_expr(arg, ctx, lines);
-                    if let Some(reg) = registers.get(index) {
-                        lines.push(format!("    mov {}, rax", reg));
                     } else {
-                        lines.push("    ; call argument exceeds register support".to_string());
+                        lines.push("    ; member assignment requires user type".to_string());
+                        lines.push("    mov rax, rcx".to_string());
                     }
                 }
-                match call.callee.as_ref() {
-                    Expr::Literal(Literal::Identifier(name)) => {
+                Expr::ComputedExpr(computed) => {
+                    self.emit_expr(computed.member.as_ref(), ctx, lines);
+                    lines.push("    push rax".to_string());
+                    self.emit_expr(computed.property.as_ref(), ctx, lines);
+                    lines.push("    push rax".to_string());
+                    self.emit_expr(right, ctx, lines);
+                    lines.push("    mov rcx, QWORD [rsp]".to_string());
+                    lines.push("    add rsp, 8".to_string());
+                    lines.push("    pop rbx".to_string());
+                    lines.push("    mov QWORD [rbx + rcx*8 + 8], rax".to_string());
+                }
+                _ => {
+                    self.emit_expr(right, ctx, lines);
+                    lines.push("    ; unsupported assignment target".to_string());
+                }
+            },
+            Expr::Call(call) => match call.callee.as_ref() {
+                Expr::Literal(Literal::Identifier(name)) => {
+                    if self.type_layouts.contains_key(name) {
+                        self.emit_constructor_call(name, &call.arguments, ctx, lines);
+                    } else if let Some(enum_name) = self.enum_variant_types.get(name) {
+                        if let Some(tag) = self.enum_variant_tags.get(name) {
+                            lines.push(format!(
+                                "    ; lowering enum constructor {}::{} to tag",
+                                enum_name, name
+                            ));
+                            lines.push(format!("    mov rax, {}", tag));
+                        } else {
+                            lines.push("    mov rax, 0".to_string());
+                        }
+                    } else {
+                        let registers = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+                        for (index, arg) in call.arguments.iter().enumerate() {
+                            self.emit_expr(arg, ctx, lines);
+                            if let Some(reg) = registers.get(index) {
+                                lines.push(format!("    mov {}, rax", reg));
+                            } else {
+                                lines.push(
+                                    "    ; call argument exceeds register support".to_string(),
+                                );
+                            }
+                        }
                         lines.push(format!("    call {}", name));
                     }
-                    _ => {
-                        lines.push(
-                            "    ; dynamic/member call unsupported in asm backend".to_string(),
-                        );
+                }
+                Expr::Mebmer(member) => {
+                    self.emit_member_call(member, &call.arguments, ctx, lines);
+                }
+                _ => {
+                    lines.push("    ; dynamic/member call unsupported in asm backend".to_string());
+                    lines.push("    mov rax, 0".to_string());
+                }
+            },
+            Expr::Mebmer(member) => {
+                let owner_type = self.infer_expr_type(member.member.as_ref(), ctx);
+                self.emit_expr(member.member.as_ref(), ctx, lines);
+                if let Type::Identifier(type_name) = owner_type {
+                    if let Some(offset) = self.field_offset(&type_name, &member.property) {
+                        lines.push(format!("    mov rax, QWORD [rax+{}]", offset));
+                    } else {
+                        lines.push(format!(
+                            "    ; unknown member '{}.{}' in asm backend",
+                            type_name, member.property
+                        ));
                         lines.push("    mov rax, 0".to_string());
                     }
+                } else {
+                    lines.push("    ; member access requires user type".to_string());
+                    lines.push("    mov rax, 0".to_string());
                 }
             }
-            Expr::Mebmer(_) => {
-                lines.push("    ; member access unsupported in asm backend".to_string());
-                lines.push("    mov rax, 0".to_string());
+            Expr::ComputedExpr(computed) => {
+                self.emit_expr(computed.member.as_ref(), ctx, lines);
+                lines.push("    push rax".to_string());
+                self.emit_expr(computed.property.as_ref(), ctx, lines);
+                lines.push("    mov rcx, rax".to_string());
+                lines.push("    pop rbx".to_string());
+                lines.push("    mov rax, QWORD [rbx + rcx*8 + 8]".to_string());
             }
-            Expr::ComputedExpr(_) => {
-                lines.push("    ; computed access unsupported in asm backend".to_string());
-                lines.push("    mov rax, 0".to_string());
-            }
-            Expr::Array(_) => {
-                lines.push("    ; array literal unsupported as value in asm backend".to_string());
-                lines.push("    mov rax, 0".to_string());
+            Expr::Array(array) => {
+                let total_bytes = ((array.array.len() + 1) * 8) as i64;
+                lines.push(format!("    mov rdi, {}", total_bytes));
+                lines.push("    call __kek_alloc".to_string());
+                lines.push("    push rax".to_string());
+                lines.push(format!("    mov QWORD [rax], {}", array.array.len()));
+                for (index, item) in array.array.iter().enumerate() {
+                    self.emit_expr(item, ctx, lines);
+                    lines.push("    mov rbx, QWORD [rsp]".to_string());
+                    lines.push(format!("    mov QWORD [rbx+{}], rax", (index + 1) * 8));
+                }
+                lines.push("    mov rax, QWORD [rsp]".to_string());
+                lines.push("    add rsp, 8".to_string());
             }
             Expr::Empty => lines.push("    mov rax, 0".to_string()),
         }
@@ -646,14 +1111,212 @@ impl AsmGenerator {
                     lines.push("    mov rax, 0".to_string());
                 }
             }
-            Literal::String(_) => {
-                lines.push("    ; string literals are not supported in asm backend".to_string());
-                lines.push("    mov rax, 0".to_string());
+            Literal::String(value) => {
+                let label = self.intern_string_literal(value);
+                lines.push(format!("    lea rax, [rel {}]", label));
             }
             Literal::This => {
-                lines.push("    ; 'this' is not supported in asm backend".to_string());
+                if let Some(offset) = ctx.var_offsets.get("this") {
+                    lines.push(format!("    mov rax, QWORD [rbp-{}]", offset));
+                } else {
+                    lines.push("    ; 'this' is not in scope".to_string());
+                    lines.push("    mov rax, 0".to_string());
+                }
+            }
+        }
+    }
+
+    fn field_offset(&self, type_name: &str, field_name: &str) -> Option<i64> {
+        self.type_layouts
+            .get(type_name)
+            .and_then(|layout| layout.fields.get(field_name))
+            .map(|field| field.offset)
+    }
+
+    fn emit_constructor_call(
+        &mut self,
+        type_name: &str,
+        args: &[Expr],
+        ctx: &mut FunctionContext,
+        lines: &mut Vec<String>,
+    ) {
+        let Some(layout) = self.type_layouts.get(type_name).cloned() else {
+            lines.push("    ; missing type layout for constructor".to_string());
+            lines.push("    mov rax, 0".to_string());
+            return;
+        };
+
+        let object_bytes = (layout.field_order.len() * 8) as i64;
+        let alloc_size = if object_bytes == 0 { 8 } else { object_bytes };
+        lines.push(format!("    mov rdi, {}", alloc_size));
+        lines.push("    call __kek_alloc".to_string());
+        lines.push("    push rax".to_string());
+
+        for (index, field_name) in layout.field_order.iter().enumerate() {
+            let Some(field) = layout.fields.get(field_name) else {
+                continue;
+            };
+            let _field_ty = &field.ty;
+            if let Some(arg) = args.get(index) {
+                self.emit_expr(arg, ctx, lines);
+            } else {
                 lines.push("    mov rax, 0".to_string());
             }
+            lines.push("    mov rbx, QWORD [rsp]".to_string());
+            lines.push(format!("    mov QWORD [rbx+{}], rax", field.offset));
+        }
+
+        if let Some(init_sig) = self.class_initializers.get(type_name).cloned() {
+            let arg_regs = ["rsi", "rdx", "rcx", "r8", "r9"];
+            for (index, arg) in args.iter().enumerate() {
+                self.emit_expr(arg, ctx, lines);
+                if let Some(reg) = arg_regs.get(index) {
+                    lines.push(format!("    mov {}, rax", reg));
+                } else {
+                    lines.push("    ; initializer argument exceeds register support".to_string());
+                }
+            }
+            lines.push("    mov rdi, QWORD [rsp]".to_string());
+            lines.push(format!("    call {}", init_sig.label));
+        }
+
+        lines.push("    mov rax, QWORD [rsp]".to_string());
+        lines.push("    add rsp, 8".to_string());
+    }
+
+    fn emit_member_call(
+        &mut self,
+        member: &crate::ast::MemberExpr,
+        args: &[Expr],
+        ctx: &mut FunctionContext,
+        lines: &mut Vec<String>,
+    ) {
+        let receiver_type = self.infer_expr_type(member.member.as_ref(), ctx);
+        self.emit_expr(member.member.as_ref(), ctx, lines);
+        lines.push("    push rax".to_string());
+
+        let arg_regs = ["rsi", "rdx", "rcx", "r8", "r9"];
+        for (index, arg) in args.iter().enumerate() {
+            self.emit_expr(arg, ctx, lines);
+            if let Some(reg) = arg_regs.get(index) {
+                lines.push(format!("    mov {}, rax", reg));
+            } else {
+                lines.push("    ; method argument exceeds register support".to_string());
+            }
+        }
+
+        lines.push("    pop rdi".to_string());
+
+        if let Type::Identifier(type_name) = receiver_type {
+            if let Some(methods) = self.method_sigs.get(&type_name) {
+                if let Some(sig) = methods.get(&member.property) {
+                    if args.len() != sig.params.len() {
+                        lines.push(format!(
+                            "    ; method '{}.{}' expects {} args, got {}",
+                            type_name,
+                            member.property,
+                            sig.params.len(),
+                            args.len()
+                        ));
+                    }
+                    lines.push(format!("    call {}", sig.label));
+                    return;
+                }
+            }
+            lines.push(format!(
+                "    ; unknown method '{}.{}' in asm backend",
+                type_name, member.property
+            ));
+            lines.push("    mov rax, 0".to_string());
+            return;
+        }
+
+        lines.push("    ; dynamic/member call unsupported in asm backend".to_string());
+        lines.push("    mov rax, 0".to_string());
+    }
+
+    fn infer_expr_type(&self, expr: &Expr, ctx: &FunctionContext) -> Type {
+        match expr {
+            Expr::Literal(Literal::Num(_)) => Type::Num,
+            Expr::Literal(Literal::Char(_)) => Type::Char,
+            Expr::Literal(Literal::Bool(_)) => Type::Bool,
+            Expr::Literal(Literal::String(_)) => Type::String,
+            Expr::Literal(Literal::Identifier(name)) => {
+                ctx.var_types.get(name).cloned().unwrap_or(Type::None)
+            }
+            Expr::Literal(Literal::This) => {
+                ctx.var_types.get("this").cloned().unwrap_or(Type::None)
+            }
+            Expr::Unary(op, right) => match op {
+                Token::Not => Type::Bool,
+                Token::Minus => self.infer_expr_type(right, ctx),
+                _ => Type::None,
+            },
+            Expr::Binary(_, op, _) => match op {
+                Token::Greater
+                | Token::GreaterEqual
+                | Token::Less
+                | Token::LessEqual
+                | Token::EqualEqual
+                | Token::NotEqual
+                | Token::And
+                | Token::Or => Type::Bool,
+                _ => Type::Num,
+            },
+            Expr::Assignment(_, right) => self.infer_expr_type(right, ctx),
+            Expr::Array(array) => {
+                let element_type = array
+                    .array
+                    .first()
+                    .map(|expr| self.infer_expr_type(expr, ctx))
+                    .unwrap_or(Type::None);
+                Type::Array(Box::new(element_type))
+            }
+            Expr::Mebmer(member) => {
+                let owner_type = self.infer_expr_type(member.member.as_ref(), ctx);
+                if let Type::Identifier(type_name) = owner_type {
+                    if let Some(layout) = self.type_layouts.get(&type_name) {
+                        if let Some(field) = layout.fields.get(&member.property) {
+                            return field.ty.clone();
+                        }
+                    }
+                }
+                Type::None
+            }
+            Expr::ComputedExpr(computed) => {
+                let owner_type = self.infer_expr_type(computed.member.as_ref(), ctx);
+                if let Type::Array(inner) = owner_type {
+                    return (*inner).clone();
+                }
+                Type::None
+            }
+            Expr::Call(call) => match call.callee.as_ref() {
+                Expr::Literal(Literal::Identifier(name)) => {
+                    if let Some(return_ty) = self.function_returns.get(name) {
+                        return return_ty.clone();
+                    }
+                    if self.type_layouts.contains_key(name) {
+                        return Type::Identifier(name.clone());
+                    }
+                    if let Some(enum_name) = self.enum_variant_types.get(name) {
+                        return Type::Identifier(enum_name.clone());
+                    }
+                    Type::None
+                }
+                Expr::Mebmer(member) => {
+                    let receiver_type = self.infer_expr_type(member.member.as_ref(), ctx);
+                    if let Type::Identifier(type_name) = receiver_type {
+                        if let Some(methods) = self.method_sigs.get(&type_name) {
+                            if let Some(sig) = methods.get(&member.property) {
+                                return sig.return_type.clone();
+                            }
+                        }
+                    }
+                    Type::None
+                }
+                _ => Type::None,
+            },
+            Expr::Empty => Type::Void,
         }
     }
 
@@ -672,7 +1335,9 @@ impl AsmGenerator {
 
 struct FunctionContext {
     var_offsets: HashMap<String, i64>,
+    var_types: HashMap<String, Type>,
     epilogue_label: String,
+    loop_stack: Vec<LoopLabels>,
 }
 
 fn collect_locals(stmt: &Stmt, locals: &mut BTreeSet<String>) {
@@ -769,6 +1434,19 @@ fn collect_expr_locals(expr: &Expr, locals: &mut BTreeSet<String>) {
     }
 }
 
+fn escape_asm_string(value: &str) -> String {
+    let mut escaped = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'\\' => escaped.push_str("\\\\"),
+            b'"' => escaped.push_str("\\\""),
+            0x20..=0x7e => escaped.push(byte as char),
+            _ => escaped.push_str(&format!("\\x{:02x}", byte)),
+        }
+    }
+    format!("\"{}\"", escaped)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeSet, HashMap};
@@ -808,7 +1486,7 @@ fun main(): Num {
     }
 
     #[test]
-    fn unrolls_for_loop_over_array_literal() {
+    fn lowers_for_loop_over_array_literal_with_runtime_iteration() {
         let source = r#"
 fun main(): Num {
     for item, index in [10, 20] {
@@ -826,8 +1504,9 @@ fun main(): Num {
         let mut generator = AsmGenerator::new();
         let output = generator.generate(&ast);
 
-        assert!(output.contains("; unrolled loop iteration 0"));
-        assert!(output.contains("; unrolled loop iteration 1"));
+        assert!(output.contains(".for_loop_"));
+        assert!(output.contains("cmp rcx, QWORD [rbx]"));
+        assert!(output.contains("mov rax, QWORD [rbx + rcx*8 + 8]"));
     }
 
     #[test]
@@ -891,7 +1570,9 @@ fun main(): Num {
         let mut lines = Vec::new();
         let mut ctx = FunctionContext {
             var_offsets: HashMap::new(),
+            var_types: HashMap::new(),
             epilogue_label: ".ep".to_string(),
+            loop_stack: Vec::new(),
         };
 
         generator.emit_literal(
@@ -984,7 +1665,9 @@ fun main(): Num {
         let mut lines = Vec::new();
         let mut ctx = FunctionContext {
             var_offsets: HashMap::from([("bound".to_string(), 8)]),
+            var_types: HashMap::from([("bound".to_string(), Type::Num)]),
             epilogue_label: ".ep".to_string(),
+            loop_stack: Vec::new(),
         };
 
         generator.emit_match(

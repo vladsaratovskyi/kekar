@@ -4,6 +4,7 @@ use kekar::{
     asm_generator::AsmGenerator,
     lexer::Lexer,
     parser::{render_compatibility_diagnostic, Parser},
+    workspace::analyze_workspace,
 };
 
 fn main() {
@@ -52,6 +53,13 @@ fn main() {
         eprintln!("Usage: kekar <source.kek> [--target asm]");
         std::process::exit(2);
     };
+
+    if let Err(errors) = analyze_workspace(&path) {
+        for error in errors {
+            eprintln!("{}", error.message);
+        }
+        std::process::exit(1);
+    }
 
     let mut lexer = Lexer::new(&path);
     let tokens = lexer.lex_file();
