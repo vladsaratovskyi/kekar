@@ -576,6 +576,32 @@ fn build_type_index(
                         module: module_path.clone(),
                         name: struct_stmt.name.clone(),
                     };
+                    let mut methods = HashMap::new();
+                    for method in &struct_stmt.methods {
+                        let method_fun = match method {
+                            Stmt::Fun(fun_stmt) => Some((fun_stmt, false)),
+                            Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                                Stmt::Fun(fun_stmt) => Some((fun_stmt, true)),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        let Some((fun_stmt, public_method)) = method_fun else {
+                            continue;
+                        };
+                        methods.insert(
+                            fun_stmt.name.clone(),
+                            MethodInfo {
+                                visibility: public_method,
+                                params: fun_stmt
+                                    .params
+                                    .iter()
+                                    .map(|param| param.param_type.clone())
+                                    .collect(),
+                                return_type: fun_stmt.return_type.clone(),
+                            },
+                        );
+                    }
                     local_types.insert(struct_stmt.name.clone(), key.clone());
                     type_index.insert(
                         key.clone(),
@@ -587,7 +613,7 @@ fn build_type_index(
                                 .iter()
                                 .map(|field| (field.name.clone(), field.field_type.clone()))
                                 .collect(),
-                            methods: HashMap::new(),
+                            methods,
                         },
                     );
                 }
@@ -921,6 +947,40 @@ impl<'a> MethodCallResolver<'a> {
         let (inner, _) = strip_pub(stmt);
         match inner {
             Stmt::Fun(fun_stmt) => self.analyze_fun(fun_stmt),
+            Stmt::Struct(struct_stmt) => {
+                let struct_type = self
+                    .module_type_namespace
+                    .get(&struct_stmt.name)
+                    .cloned()
+                    .or_else(|| {
+                        self.type_index.keys().find_map(|key| {
+                            if key.module == self.module.path && key.name == struct_stmt.name {
+                                Some(key.clone())
+                            } else {
+                                None
+                            }
+                        })
+                    });
+
+                for method in &struct_stmt.methods {
+                    let method_fun = match method {
+                        Stmt::Fun(fun_stmt) => Some(fun_stmt),
+                        Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                            Stmt::Fun(fun_stmt) => Some(fun_stmt),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let Some(fun_stmt) = method_fun else {
+                        continue;
+                    };
+
+                    let previous_impl = self.current_impl_type.clone();
+                    self.current_impl_type = struct_type.clone();
+                    self.analyze_fun(fun_stmt);
+                    self.current_impl_type = previous_impl;
+                }
+            }
             Stmt::Impl(impl_stmt) => {
                 let impl_type = self
                     .module_type_namespace
@@ -2083,6 +2143,7 @@ mod tests {
                     stmt: Box::new(Stmt::Struct(StructStmt {
                         name: "Point".to_string(),
                         fields: vec![],
+                        methods: vec![],
                     })),
                 }),
             ],

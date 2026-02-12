@@ -82,6 +82,7 @@ pub struct ConstStmt {
 pub struct StructStmt {
     pub name: String,
     pub fields: Vec<FieldDecl>,
+    pub methods: Vec<Stmt>,
 }
 
 #[derive(Debug, PartialEq, Clone)]

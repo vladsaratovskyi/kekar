@@ -7,8 +7,8 @@ mod tests {
         ast::{
             BlockStmt, BreakStmt, ClassStmt, ConstStmt, ContinueStmt, EnumStmt, EnumVariant, Expr,
             ExprStmt, FieldDecl, ForStmt, FunStmt, IfStmt, ImplStmt, ImportStmt, Literal, MatchArm,
-            MatchStmt, ModStmt, Param, Pattern, PubStmt, ReturnStmt, Stmt, StructStmt, Type,
-            UseStmt, VarStmt, WhileStmt,
+            MatchStmt, MemberExpr, ModStmt, Param, Pattern, PubStmt, ReturnStmt, Stmt, StructStmt,
+            Type, UseStmt, VarStmt, WhileStmt,
         },
         lexer::Token,
         parser::Parser,
@@ -580,6 +580,7 @@ mod tests {
                                 field_type: Type::Num,
                             },
                         ],
+                        methods: vec![],
                     })),
                 }),
                 Stmt::Pub(PubStmt {
@@ -688,6 +689,89 @@ mod tests {
                         block: Box::new(Stmt::Block(BlockStmt {
                             stmts: vec![Stmt::Return(ReturnStmt {
                                 return_expr: Expr::Literal(Literal::Num(1.0)),
+                            })],
+                        })),
+                    }),
+                    Stmt::Pub(PubStmt {
+                        stmt: Box::new(Stmt::Fun(FunStmt {
+                            name: "zero".to_string(),
+                            return_type: Type::Num,
+                            params: vec![],
+                            block: Box::new(Stmt::Block(BlockStmt {
+                                stmts: vec![Stmt::Return(ReturnStmt {
+                                    return_expr: Expr::Literal(Literal::Num(0.0)),
+                                })],
+                            })),
+                        })),
+                    }),
+                ],
+            })],
+        };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_struct_with_inline_methods() {
+        let tokens = vec![
+            Token::Struct,
+            Token::Identifier("Driver".to_string()),
+            Token::LeftBracket,
+            Token::Identifier("state".to_string()),
+            Token::Colon,
+            Token::Identifier("Num".to_string()),
+            Token::Semicolon,
+            Token::Fun,
+            Token::Identifier("apply".to_string()),
+            Token::LeftParen,
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Identifier("this".to_string()),
+            Token::Dot,
+            Token::Identifier("state".to_string()),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Pub,
+            Token::Fun,
+            Token::Identifier("zero".to_string()),
+            Token::LeftParen,
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Number(0.0),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::RightBracket,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![Stmt::Struct(StructStmt {
+                name: "Driver".to_string(),
+                fields: vec![FieldDecl {
+                    name: "state".to_string(),
+                    field_type: Type::Num,
+                }],
+                methods: vec![
+                    Stmt::Fun(FunStmt {
+                        name: "apply".to_string(),
+                        return_type: Type::Num,
+                        params: vec![],
+                        block: Box::new(Stmt::Block(BlockStmt {
+                            stmts: vec![Stmt::Return(ReturnStmt {
+                                return_expr: Expr::Mebmer(MemberExpr {
+                                    member: Box::new(Expr::Literal(Literal::Identifier(
+                                        "this".to_string(),
+                                    ))),
+                                    property: "state".to_string(),
+                                }),
                             })],
                         })),
                     }),

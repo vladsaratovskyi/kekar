@@ -316,25 +316,52 @@ impl Parser {
         self.expect(&Token::LeftBracket);
 
         let mut fields = Vec::new();
+        let mut methods = Vec::new();
         while self.has_tokens() && self.current_token() != &Token::RightBracket {
             if self.current_token() == &Token::Semicolon {
                 self.get_token_and_move();
                 continue;
             }
 
-            let field_name = self.expect_identifier_get_name();
-            self.expect(&Token::Colon);
-            let field_type = self.parse_type();
-            self.expect(&Token::Semicolon);
+            match self.current_token() {
+                Token::Fun => {
+                    methods.push(self.parse_fun_stmt());
+                }
+                Token::Pub => {
+                    let method = self.parse_pub_stmt();
+                    let valid = matches!(&method, Stmt::Pub(pub_stmt) if matches!(pub_stmt.stmt.as_ref(), Stmt::Fun(_)));
+                    if !valid {
+                        panic!(
+                            "Struct blocks can contain only field declarations and function methods"
+                        );
+                    }
+                    methods.push(method);
+                }
+                Token::Identifier(_) => {
+                    let field_name = self.expect_identifier_get_name();
+                    self.expect(&Token::Colon);
+                    let field_type = self.parse_type();
+                    self.expect(&Token::Semicolon);
 
-            fields.push(FieldDecl {
-                name: field_name,
-                field_type,
-            });
+                    fields.push(FieldDecl {
+                        name: field_name,
+                        field_type,
+                    });
+                }
+                _ => {
+                    panic!(
+                        "Struct blocks can contain only field declarations and method declarations"
+                    )
+                }
+            }
         }
 
         self.expect(&Token::RightBracket);
-        Stmt::Struct(StructStmt { name, fields })
+        Stmt::Struct(StructStmt {
+            name,
+            fields,
+            methods,
+        })
     }
 
     fn parse_enum_stmt(&mut self) -> Stmt {

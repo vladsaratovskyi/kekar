@@ -231,6 +231,43 @@ impl Point {
 }
 
 #[test]
+fn workspace_accepts_public_inline_struct_method_call_across_modules() {
+    let root = temp_workspace("method-inline-pub-cross-module");
+    let entry = root.join("main.kek");
+    let util = root.join("util.kek");
+
+    write_file(
+        &entry,
+        r#"
+mod util;
+use util::Point;
+
+fun main() -> Num {
+    var p: Point = Point(4);
+    return p.value();
+}
+"#,
+    );
+
+    write_file(
+        &util,
+        r#"
+pub struct Point {
+    n: Num;
+    pub fun value() -> Num {
+        return this.n;
+    }
+}
+"#,
+    );
+
+    let result = analyze_workspace(&entry);
+    assert!(result.is_ok(), "Expected no workspace errors: {result:?}");
+
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}
+
+#[test]
 fn workspace_rejects_private_impl_method_call_across_modules() {
     let root = temp_workspace("method-private-cross-module");
     let entry = root.join("main.kek");

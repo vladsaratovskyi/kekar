@@ -20,6 +20,7 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] Parse import aliases (`import X as Y from "..."`)
 - [x] Parse module/use declarations (`mod`, `use a::b`)
 - [x] Parse public declarations (`pub fun`, `pub var`, `pub const`, `pub struct`, `pub enum`, `pub class`, `pub mod`, `pub use`, `pub impl`)
+- [x] Parse struct declarations with inline methods (`fun` / `pub fun`) in addition to fields
 - [x] Parse `impl` blocks with method declarations
 - [x] Parse `match` statements with literal/identifier/wildcard/variant patterns
 - [x] Add parser tests for new members and patterns
@@ -31,7 +32,7 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] Add baseline handling for new statement kinds to keep analysis exhaustive
 - [x] Add baseline `match` analysis with arm scopes and pattern bindings
 - [x] Enforce module/import resolution semantics (`mod`/`use`/`import`)
-- [x] Enforce `struct`/`enum`/`impl` member and method typing rules
+- [x] Enforce `struct`/`enum` members and method typing rules (inline struct methods + `impl`)
 - [x] Enforce match exhaustiveness and pattern type compatibility
 - [x] Add visibility/access control semantics for `pub`
 
@@ -40,13 +41,13 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] ASM generator made exhaustive for new AST variants (unsupported constructs safely ignored with comments)
 - [x] Ensure `pub fun main` is recognized for ASM entrypoint generation
 - [x] Lower `match` to executable ASM control flow instead of comments/placeholders
-- [x] Lower `struct`/`enum`/`impl` into stable runtime representation in ASM backend
+- [x] Lower `struct`/`enum`/`impl` into stable runtime representation in ASM backend (including inline struct methods)
 
 ## Stage 6: Self-hosting readiness
-- [x] Semantic guardrails exist for module/use/import declarations, user-defined types, impl methods, match coverage, and `pub` visibility
+- [x] Semantic guardrails exist for module/use/import declarations, user-defined types, struct/impl methods, match coverage, and `pub` visibility
 - [x] Core frontend pipeline (lexer/parser/sema) supports v1 declaration surface needed by a compiler frontend codebase
 - [x] Real multi-file module loading and path-based symbol resolution (filesystem-backed, cross-file linking)
-- [x] Namespace-aware method call resolution for impl methods and visibility across module boundaries
+- [x] Namespace-aware method call resolution for struct/impl methods and visibility across module boundaries
 - [x] Full user-type semantics needed for bootstrap-scale code (constructor/value typing strategy, richer class/enum runtime model)
 - [x] Compatibility diagnostics policy implemented in compiler output (warnings + migration hints)
 - [x] Backend lowering support for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable ASM output
@@ -56,11 +57,11 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] Wire compiler entrypoint to workspace-level analysis/linking before ASM generation (`analyze_workspace` path)
 - [ ] Replace panic-based lexer/parser failures with structured diagnostics and non-zero exits
 - [x] Implement ASM lowering for runtime-critical values (`String`, arrays, `this`, member access, computed access)
-- [x] Implement ASM lowering for dynamic/member calls and method dispatch used by impl/class code
+- [x] Implement ASM lowering for dynamic/member calls and method dispatch used by struct/impl/class code
 - [x] Implement loop control lowering (`break`, `continue`) with correct label/stack semantics
 - [x] Implement non-literal iterator lowering for `for` (not just compile-time array unroll)
 - [x] Complete match lowering for enum payload pattern checks and payload bindings
-- [ ] Add cross-module function symbol typing and resolution (not only member-call checks)
+- [x] Add cross-module function symbol typing and resolution (not only member-call checks)
 - [ ] Add callable visibility enforcement for cross-module function calls (`pub`/private)
 - [ ] Add spec/implementation parity for currently frozen grammar features (generic type syntax, postfix `?`)
 - [ ] Add end-to-end backend tests that assemble/link/run generated ASM for representative programs

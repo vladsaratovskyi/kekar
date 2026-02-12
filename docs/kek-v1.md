@@ -1,8 +1,9 @@
 # Kek v1 Language Specification (Frozen)
 
 Status: Frozen
-Version: `1.0.0`
+Version: `1.0.1`
 Frozen on: `2026-02-11`
+Last amended: `2026-02-12`
 
 This document is the canonical grammar and compatibility contract for Kek v1.
 If there is any conflict between implementation and this document, this document wins.
@@ -15,6 +16,8 @@ Kek v1 is a statically typed, imperative language with modules and enough expres
 - Blocks use `{ ... }`
 - Canonical function params use `name: Type`
 - Canonical function return types use `-> Type`
+- Canonical struct method placement is inline inside `struct { ... }`
+- Separate `impl Type { ... }` blocks are still accepted in v1 for compatibility
 
 Examples:
 ```kek
@@ -78,14 +81,16 @@ params       = param { "," param } ;
 param        = IDENT ":" type ;
 # compatibility mode MAY accept legacy `Type name` params
 
-struct_decl  = [ "pub" ] "struct" IDENT "{" { field_decl } "}" ;
+struct_decl  = [ "pub" ] "struct" IDENT "{" { struct_member } "}" ;
+struct_member= field_decl | method_decl ;
 field_decl   = IDENT ":" type ";" ;
+method_decl  = [ "pub" ] "fun" IDENT "(" [ params ] ")" [ "->" type ] block ;
 
 enum_decl    = [ "pub" ] "enum" IDENT "{" enum_variant { "," enum_variant } [ "," ] "}" ;
 enum_variant = IDENT [ "(" type_list ")" ] ;
 type_list    = type { "," type } ;
 
-impl_decl    = "impl" IDENT "{" { fun_decl } "}" ;
+impl_decl    = [ "pub" ] "impl" IDENT "{" { method_decl } "}" ;
 
 class_decl   = [ "pub" ] "class" IDENT "{" { var_decl | fun_decl } "}" ;
 
@@ -160,6 +165,7 @@ base_type    = "Num" | "Bool" | "String" | "Char" | "Byte" | "Void"
 - `&&` and `||` short-circuit
 - `for item, index in expr` binds element + zero-based index
 - `return;` is legal only in functions returning `Void` (or compatibility mode if not yet type-checked)
+- `this` is valid inside class methods, struct methods, and `impl` methods
 
 ## 7. Reserved-Word Policy
 All entries listed in `docs/lexicon-v1.toml` under `keywords` are reserved in v1 and cannot be used as identifiers.

@@ -179,6 +179,7 @@ impl AsmGenerator {
                         struct_stmt.name.clone(),
                         self.layout_from_struct(struct_stmt),
                     );
+                    self.collect_struct_methods(struct_stmt);
                 }
                 Stmt::Class(class_stmt) => {
                     self.type_layouts
@@ -277,6 +278,35 @@ impl AsmGenerator {
         }
     }
 
+    fn collect_struct_methods(&mut self, struct_stmt: &StructStmt) {
+        let methods = self
+            .method_sigs
+            .entry(struct_stmt.name.clone())
+            .or_default();
+        for method in &struct_stmt.methods {
+            let method = match method {
+                Stmt::Pub(pub_stmt) => pub_stmt.stmt.as_ref(),
+                other => other,
+            };
+
+            let Stmt::Fun(fun_stmt) = method else {
+                continue;
+            };
+            methods.insert(
+                fun_stmt.name.clone(),
+                MethodSig {
+                    label: format!("{}__{}", struct_stmt.name, fun_stmt.name),
+                    params: fun_stmt
+                        .params
+                        .iter()
+                        .map(|param| param.param_type.clone())
+                        .collect(),
+                    return_type: fun_stmt.return_type.clone(),
+                },
+            );
+        }
+    }
+
     fn collect_class_methods(&mut self, class_stmt: &ClassStmt) {
         let methods = self.method_sigs.entry(class_stmt.name.clone()).or_default();
         let members = match class_stmt.block.as_ref() {
@@ -355,7 +385,7 @@ impl AsmGenerator {
             Stmt::Const(_) => {
                 text_lines.push("; top-level const ignored by asm backend".to_string())
             }
-            Stmt::Struct(struct_stmt) => self.emit_struct_metadata(struct_stmt, rodata_lines),
+            Stmt::Struct(struct_stmt) => self.emit_struct(struct_stmt, text_lines, rodata_lines),
             Stmt::Enum(enum_stmt) => self.emit_enum_metadata(enum_stmt, rodata_lines),
             Stmt::Impl(impl_stmt) => self.emit_impl(impl_stmt, text_lines, rodata_lines),
             Stmt::Match(_) => {
@@ -403,6 +433,50 @@ impl AsmGenerator {
         rodata_lines.push(format!("    dq {}", method_labels.len()));
         for method_label in method_labels {
             rodata_lines.push(format!("    dq {}", method_label));
+        }
+    }
+
+    fn emit_struct(
+        &mut self,
+        struct_stmt: &StructStmt,
+        text_lines: &mut Vec<String>,
+        rodata_lines: &mut Vec<String>,
+    ) {
+        let mut method_labels = Vec::new();
+        for method in &struct_stmt.methods {
+            let method_fun = match method {
+                Stmt::Fun(fun_stmt) => Some(fun_stmt),
+                Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                    Stmt::Fun(fun_stmt) => Some(fun_stmt),
+                    _ => None,
+                },
+                _ => None,
+            };
+
+            let Some(fun_stmt) = method_fun else {
+                continue;
+            };
+
+            let mut lowered = fun_stmt.clone();
+            lowered.name = format!("{}__{}", struct_stmt.name, fun_stmt.name);
+            lowered.params.insert(
+                0,
+                Param {
+                    name: "this".to_string(),
+                    param_type: Type::Identifier(struct_stmt.name.clone()),
+                },
+            );
+            method_labels.push(lowered.name.clone());
+            self.emit_function(&lowered, text_lines);
+        }
+
+        self.emit_struct_metadata(struct_stmt, rodata_lines);
+        if !method_labels.is_empty() {
+            rodata_lines.push(format!(
+                "; struct '{}' defines {} inline method(s)",
+                struct_stmt.name,
+                method_labels.len()
+            ));
         }
     }
 

@@ -62,6 +62,7 @@ struct StructDef {
     visibility: Visibility,
     field_order: Vec<(String, Type)>,
     fields: HashMap<String, Type>,
+    methods: HashMap<String, ImplMethodSig>,
 }
 
 #[derive(Debug, Clone)]
@@ -393,6 +394,7 @@ impl SemanticAnalyzer {
 
         let mut fields = HashMap::new();
         let mut field_order = Vec::new();
+        let mut methods = HashMap::new();
         for field in &struct_stmt.fields {
             if fields.contains_key(&field.name) {
                 self.error(format!(
@@ -405,12 +407,83 @@ impl SemanticAnalyzer {
             field_order.push((field.name.clone(), field.field_type.clone()));
         }
 
+        for method in &struct_stmt.methods {
+            match method {
+                Stmt::Fun(fun_stmt) => {
+                    let duplicate = methods
+                        .insert(
+                            fun_stmt.name.clone(),
+                            ImplMethodSig {
+                                visibility: Visibility::Private,
+                                sig: FunctionSig {
+                                    params: fun_stmt
+                                        .params
+                                        .iter()
+                                        .map(|param| param.param_type.clone())
+                                        .collect(),
+                                    return_type: fun_stmt.return_type.clone(),
+                                },
+                            },
+                        )
+                        .is_some();
+                    if duplicate {
+                        self.error(format!(
+                            "Duplicate method '{}' in struct '{}'",
+                            fun_stmt.name, struct_stmt.name
+                        ));
+                    }
+                }
+                Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                    Stmt::Fun(fun_stmt) => {
+                        if visibility == Visibility::Private {
+                            self.error(format!(
+                                "Cannot expose public method '{}' on private type '{}'",
+                                fun_stmt.name, struct_stmt.name
+                            ));
+                        }
+                        let duplicate = methods
+                            .insert(
+                                fun_stmt.name.clone(),
+                                ImplMethodSig {
+                                    visibility: Visibility::Public,
+                                    sig: FunctionSig {
+                                        params: fun_stmt
+                                            .params
+                                            .iter()
+                                            .map(|param| param.param_type.clone())
+                                            .collect(),
+                                        return_type: fun_stmt.return_type.clone(),
+                                    },
+                                },
+                            )
+                            .is_some();
+                        if duplicate {
+                            self.error(format!(
+                                "Duplicate method '{}' in struct '{}'",
+                                fun_stmt.name, struct_stmt.name
+                            ));
+                        }
+                    }
+                    _ => self.error("Struct blocks can contain only fields and methods"),
+                },
+                _ => self.error("Struct blocks can contain only fields and methods"),
+            }
+        }
+
+        if !methods.is_empty() {
+            self.impl_methods
+                .entry(struct_stmt.name.clone())
+                .or_default()
+                .extend(methods.clone());
+        }
+
         self.type_defs.insert(
             struct_stmt.name.clone(),
             TypeDef::Struct(StructDef {
                 visibility,
                 field_order,
                 fields,
+                methods,
             }),
         );
     }
@@ -860,13 +933,33 @@ impl SemanticAnalyzer {
     }
 
     fn analyze_struct_stmt(&mut self, struct_stmt: &StructStmt) {
-        if let Some(TypeDef::Struct(def)) = self.type_defs.get(&struct_stmt.name).cloned() {
-            for (field_name, field_ty) in &def.fields {
-                self.validate_type_exists(
-                    field_ty,
-                    &format!("field '{}.{}' type", struct_stmt.name, field_name),
-                );
-            }
+        let Some(TypeDef::Struct(def)) = self.type_defs.get(&struct_stmt.name).cloned() else {
+            return;
+        };
+
+        for (field_name, field_ty) in &def.fields {
+            self.validate_type_exists(
+                field_ty,
+                &format!("field '{}.{}' type", struct_stmt.name, field_name),
+            );
+        }
+
+        for method in &struct_stmt.methods {
+            let method_fun = match method {
+                Stmt::Fun(fun_stmt) => Some(fun_stmt),
+                Stmt::Pub(pub_stmt) => match pub_stmt.stmt.as_ref() {
+                    Stmt::Fun(fun_stmt) => Some(fun_stmt),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let Some(fun_stmt) = method_fun else {
+                continue;
+            };
+            let previous_impl = self.current_impl_type.clone();
+            self.current_impl_type = Some(struct_stmt.name.clone());
+            self.analyze_fun_stmt(fun_stmt);
+            self.current_impl_type = previous_impl;
         }
     }
 
@@ -1414,6 +1507,14 @@ impl SemanticAnalyzer {
                         Some(TypeDef::Struct(def)) => {
                             if let Some(field_ty) = def.fields.get(&member.property) {
                                 field_ty.clone()
+                            } else if def.methods.contains_key(&member.property)
+                                || self
+                                    .impl_methods
+                                    .get(&type_name)
+                                    .and_then(|methods| methods.get(&member.property))
+                                    .is_some()
+                            {
+                                Type::None
                             } else {
                                 self.error(format!(
                                     "Unknown field '{}.{}'",
@@ -1871,6 +1972,7 @@ mod tests {
                         field_type: Type::Num,
                     },
                 ],
+                methods: vec![],
             },
             Visibility::Private,
         );
@@ -2041,6 +2143,7 @@ mod tests {
                     name: "x".to_string(),
                     field_type: Type::Num,
                 }],
+                methods: vec![],
             },
             Visibility::Private,
         );

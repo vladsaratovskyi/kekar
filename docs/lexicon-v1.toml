@@ -1,7 +1,8 @@
 [meta]
 name = "kek-v1"
-version = "1.0.0"
+version = "1.0.1"
 frozen_on = "2026-02-11"
+last_amended_on = "2026-02-12"
 
 [compatibility]
 legacy_param_style = "Type name"

@@ -11,7 +11,7 @@ This document defines the current runtime ABI used by the ASM backend.
 - System V x86_64 register arguments.
 - Function args: `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`.
 - Return value: `rax`.
-- Methods are lowered to static labels `<Type>__<method>`.
+- Methods declared inline in `struct`/`class` or in `impl` blocks are lowered to static labels `<Type>__<method>`.
 - Method call ABI: receiver (`this`) in `rdi`, then explicit args in `rsi..r9`.
 
 ## Heap allocator

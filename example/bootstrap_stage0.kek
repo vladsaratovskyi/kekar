@@ -7,9 +7,6 @@ enum Node {
 
 struct Driver {
     acc: Num;
-}
-
-impl Driver {
     fun apply(node: Node) -> Num {
         match node {
             Lit(v) => {

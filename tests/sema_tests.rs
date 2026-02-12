@@ -314,6 +314,26 @@ fun main() -> Num {
 }
 
 #[test]
+fn sema_accepts_inline_struct_method_call_on_typed_receiver() {
+    let source = r#"
+struct Point {
+    x: Num;
+    fun get() -> Num {
+        return this.x;
+    }
+}
+
+fun main() -> Num {
+    var p: Point = Point(1);
+    return p.get();
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}
+
+#[test]
 fn sema_rejects_impl_method_call_argument_type_mismatch() {
     let source = r#"
 struct Point {

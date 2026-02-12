@@ -169,6 +169,28 @@ fun main() -> Num {
 }
 
 #[test]
+fn lowers_inline_struct_method_call_without_impl_block() {
+    let source = r#"
+struct Driver {
+    state: Num;
+    fun apply() -> Num {
+        return this.state;
+    }
+}
+
+fun main() -> Num {
+    var d: Driver = Driver(9);
+    return d.apply();
+}
+"#;
+
+    let output = compile_to_asm(source);
+
+    assert!(output.contains("Driver__apply:"));
+    assert!(output.contains("call Driver__apply"));
+}
+
+#[test]
 fn lowers_string_and_array_literals() {
     let source = r#"
 fun main() -> Num {

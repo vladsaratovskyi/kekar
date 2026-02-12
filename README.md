@@ -3,6 +3,9 @@ Kekar is a Rust compiler frontend for the `kek` language.
 Current pipeline:
 - `Lexer` -> `Parser` -> AST -> x86_64 NASM-style assembly (`asm`) generation
 
+Current v1 syntax note:
+- Struct methods are declared inline inside `struct { ... }` (separate `impl` blocks remain supported for compatibility).
+
 Run:
 ```bash
 cargo run -- example/person.kek
