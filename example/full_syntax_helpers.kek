@@ -1,0 +1,7 @@
+pub fun twice(value: Num) -> Num {
+    return value * 2;
+}
+
+pub fun pick(values: Num[], index: Num) -> Num {
+    return values[index];
+}

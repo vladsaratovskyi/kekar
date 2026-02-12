@@ -53,6 +53,31 @@ fun main() -> Num {
 }
 
 #[test]
+fn cli_compiles_full_syntax_example_to_asm() {
+    let source_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("example").join("full_syntax.kek");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_kekar"))
+        .arg(&source_path)
+        .arg("--target")
+        .arg("asm")
+        .output()
+        .expect("should run compiler");
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("_start:"));
+    assert!(stdout.contains("main:"));
+    assert!(stdout.contains("Machine__apply:"));
+    assert!(stdout.contains("Machine__reset:"));
+    assert!(stdout.contains("Report__ok:"));
+    assert!(stdout.contains("__kek_struct_Machine:"));
+    assert!(stdout.contains("__kek_enum_Action:"));
+    assert!(stdout.contains("call __kek_m"));
+    assert!(!stdout.contains("dynamic/member call unsupported in asm backend"));
+}
+
+#[test]
 fn cli_exits_non_zero_with_structured_lexer_diagnostic() {
     let root = temp_workspace("lex-error");
     let source_path = root.join("main.kek");

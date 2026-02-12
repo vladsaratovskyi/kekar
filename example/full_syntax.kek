@@ -1,0 +1,109 @@
+pub mod full_syntax_math;
+pub use full_syntax_math::sum;
+import Helpers as H from "./full_syntax_helpers.kek";
+use H::pick;
+
+pub const STEP: Num = 2;
+
+pub enum Action {
+    Add(Num, Num),
+    Hold(Num),
+    Stop
+}
+
+pub struct Machine {
+    total: Num;
+
+    pub fun apply(action: Action) -> Num {
+        match action {
+            Add(a, b) => {
+                this.total = a + b;
+                return this.total;
+            },
+            Hold(v) => {
+                this.total = v;
+                return this.total;
+            },
+            Stop() => {
+                return this.total;
+            }
+        }
+
+        return this.total;
+    }
+}
+
+pub impl Machine {
+    pub fun reset() -> Num {
+        this.total = 0;
+        return this.total;
+    }
+}
+
+pub class Report {
+    var code: Num;
+
+    fun init(code: Num) {
+        this.code = code;
+    }
+
+    pub fun ok() -> Bool {
+        return this.code > 0;
+    }
+}
+
+fun build(seed: Num) -> Action[] {
+    return [
+        Add(seed, STEP),
+        Hold(seed),
+        Stop()
+    ];
+}
+
+fun execute(seed: Num) -> Num {
+    var actions: Action[] = build(seed);
+    var machine: Machine<Num> = Machine(0);
+    var last: Num = 0;
+    var index: Num = 0;
+
+    while index < 10 {
+        index = index + 1;
+
+        if index < 0 {
+            continue;
+        }
+
+        break;
+    }
+
+    for action, i in actions {
+        if i < 0 {
+            continue;
+        }
+
+        match action {
+            Stop() => {
+                break;
+            },
+            _ => {
+                last = machine.apply(action);
+            }
+        }
+    }
+
+    var values: Num[] = [last, STEP, seed];
+    var chosen: Num = pick(values, 0);
+    var doubled: Num = H.twice(chosen)?;
+    var scaled: Num = full_syntax_math.scale(seed, STEP);
+
+    var report: Report = Report(doubled + scaled);
+    if report.ok() && (machine.total >= 0 || false) {
+        return sum(doubled, machine.total);
+    } else {
+        return machine.reset();
+    }
+}
+
+pub fun main() -> Num {
+    return execute(4);
+}

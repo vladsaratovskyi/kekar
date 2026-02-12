@@ -306,3 +306,20 @@ pub fun add(a: Num, b: Num) -> Num {
     assert_eq!(code, 5);
     fs::remove_dir_all(source_root).ok();
 }
+
+#[test]
+fn backend_e2e_runs_full_syntax_example_program() {
+    if let Err(reason) = ensure_backend_e2e_runtime() {
+        eprintln!("skipping backend e2e test: {reason}");
+        return;
+    }
+
+    let entry = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("example")
+        .join("full_syntax.kek");
+
+    let code = compile_workspace_entry_and_run(&entry, "full-syntax-example")
+        .expect("workspace assemble/link/run should succeed");
+
+    assert_eq!(code, 12);
+}

@@ -1,0 +1,7 @@
+pub fun sum(a: Num, b: Num) -> Num {
+    return a + b;
+}
+
+pub fun scale(value: Num, factor: Num) -> Num {
+    return value * factor;
+}
