@@ -805,6 +805,12 @@ impl AsmGenerator {
                     lines.push(format!("    cmp {}, {}", value_reg, as_num));
                     lines.push(format!("    jne {}", fail_label));
                 }
+                Literal::String(value) => {
+                    let label = self.intern_string_literal(value);
+                    lines.push(format!("    lea r14, [rel {}]", label));
+                    lines.push(format!("    cmp {}, r14", value_reg));
+                    lines.push(format!("    jne {}", fail_label));
+                }
                 Literal::Identifier(name) if name == "None" => {
                     lines.push(format!("    cmp {}, 0", value_reg));
                     lines.push(format!("    jne {}", fail_label));
@@ -1729,6 +1735,25 @@ fun main(): Num {
         assert!(lines.contains(&"    cmp r13, 0".to_string()));
         assert!(lines.contains(&"    je .match_fail".to_string()));
         assert!(lines.contains(&"    cmp QWORD [r13], 3".to_string()));
+        assert!(lines.contains(&"    jne .match_fail".to_string()));
+    }
+
+    #[test]
+    fn emit_pattern_guard_string_uses_interned_label_compare() {
+        let mut generator = AsmGenerator::new();
+        let mut lines = Vec::new();
+
+        generator.emit_pattern_guard(
+            &Pattern::Literal(Literal::String("ok".to_string())),
+            "r13",
+            ".match_fail",
+            &mut lines,
+        );
+
+        assert!(lines
+            .iter()
+            .any(|line| line.starts_with("    lea r14, [rel __kek_str_")));
+        assert!(lines.contains(&"    cmp r13, r14".to_string()));
         assert!(lines.contains(&"    jne .match_fail".to_string()));
     }
 

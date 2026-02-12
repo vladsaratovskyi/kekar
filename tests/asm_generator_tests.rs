@@ -241,3 +241,51 @@ fun main() -> Num {
     assert!(output.contains("mov r14, QWORD [r13+16]"));
     assert!(!output.contains("variant payload pattern checks are not represented in asm backend"));
 }
+
+#[test]
+fn lowers_match_struct_enum_and_impl_without_placeholders() {
+    let source = r#"
+struct Point {
+    x: Num;
+}
+
+enum Maybe {
+    Some(Num),
+    Empty
+}
+
+impl Point {
+    fun wrap() -> Maybe {
+        return Some(this.x);
+    }
+}
+
+fun main() -> Num {
+    var p: Point = Point(7);
+    var s: String = "ok";
+    match s {
+        "ok" => { },
+        _ => { }
+    }
+
+    var m: Maybe = p.wrap();
+    match m {
+        Some(v) => { return v; },
+        Empty() => { return 0; }
+    }
+    return 0;
+}
+"#;
+
+    let output = compile_to_asm(source);
+
+    assert!(output.contains("Point__wrap:"));
+    assert!(output.contains("call Point__wrap"));
+    assert!(output.contains("__kek_struct_Point:"));
+    assert!(output.contains("__kek_enum_Maybe:"));
+    assert!(output.contains("__kek_impl_Point:"));
+    assert!(output.contains("__kek_str_0:"));
+    assert!(output.contains("cmp QWORD [r13], 0"));
+    assert!(output.contains("mov r14, QWORD [r13+16]"));
+    assert!(!output.contains("unsupported literal match pattern in asm backend"));
+}

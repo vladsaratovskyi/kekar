@@ -49,7 +49,7 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] Namespace-aware method call resolution for impl methods and visibility across module boundaries
 - [x] Full user-type semantics needed for bootstrap-scale code (constructor/value typing strategy, richer class/enum runtime model)
 - [x] Compatibility diagnostics policy implemented in compiler output (warnings + migration hints)
-- [ ] Backend lowering support for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable ASM output
+- [x] Backend lowering support for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable ASM output
 - [ ] Bootstrap milestone: compile a non-trivial Kek program in Kek (self-host stage-0 target)
 
 ## Stage 7: Self-host blocker closure (post ASM-only audit)
