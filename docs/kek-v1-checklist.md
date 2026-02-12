@@ -47,7 +47,7 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] Core frontend pipeline (lexer/parser/sema) supports v1 declaration surface needed by a compiler frontend codebase
 - [x] Real multi-file module loading and path-based symbol resolution (filesystem-backed, cross-file linking)
 - [x] Namespace-aware method call resolution for impl methods and visibility across module boundaries
-- [ ] Full user-type semantics needed for bootstrap-scale code (constructor/value typing strategy, richer class/enum runtime model)
+- [x] Full user-type semantics needed for bootstrap-scale code (constructor/value typing strategy, richer class/enum runtime model)
 - [x] Compatibility diagnostics policy implemented in compiler output (warnings + migration hints)
 - [ ] Backend lowering support for v1 constructs (`match`, `struct`/`enum`/`impl`) in executable ASM output
 - [ ] Bootstrap milestone: compile a non-trivial Kek program in Kek (self-host stage-0 target)
@@ -59,7 +59,7 @@ Last updated for commit: `df2789e` + self-host audit
 - [x] Implement ASM lowering for dynamic/member calls and method dispatch used by impl/class code
 - [x] Implement loop control lowering (`break`, `continue`) with correct label/stack semantics
 - [x] Implement non-literal iterator lowering for `for` (not just compile-time array unroll)
-- [ ] Complete match lowering for enum payload pattern checks and payload bindings
+- [x] Complete match lowering for enum payload pattern checks and payload bindings
 - [ ] Add cross-module function symbol typing and resolution (not only member-call checks)
 - [ ] Add callable visibility enforcement for cross-module function calls (`pub`/private)
 - [ ] Add spec/implementation parity for currently frozen grammar features (generic type syntax, postfix `?`)

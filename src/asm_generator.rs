@@ -15,6 +15,7 @@ pub struct AsmGenerator {
     string_labels: HashMap<String, String>,
     enum_variant_tags: HashMap<String, i64>,
     enum_variant_types: HashMap<String, String>,
+    enum_variant_payloads: HashMap<String, usize>,
     function_returns: HashMap<String, Type>,
     type_layouts: HashMap<String, TypeLayout>,
     method_sigs: HashMap<String, HashMap<String, MethodSig>>,
@@ -55,6 +56,7 @@ impl AsmGenerator {
             string_labels: HashMap::new(),
             enum_variant_tags: HashMap::new(),
             enum_variant_types: HashMap::new(),
+            enum_variant_payloads: HashMap::new(),
             function_returns: HashMap::new(),
             type_layouts: HashMap::new(),
             method_sigs: HashMap::new(),
@@ -144,6 +146,7 @@ impl AsmGenerator {
     fn prepare_program_metadata(&mut self, program: &BlockStmt) {
         self.enum_variant_tags = self.collect_enum_variant_tags(program);
         self.enum_variant_types.clear();
+        self.enum_variant_payloads.clear();
         self.function_returns.clear();
         self.type_layouts.clear();
         self.method_sigs.clear();
@@ -167,6 +170,8 @@ impl AsmGenerator {
                     for variant in &enum_stmt.variants {
                         self.enum_variant_types
                             .insert(variant.name.clone(), enum_stmt.name.clone());
+                        self.enum_variant_payloads
+                            .insert(variant.name.clone(), variant.arguments.len());
                     }
                 }
                 Stmt::Struct(struct_stmt) => {
@@ -812,13 +817,21 @@ impl AsmGenerator {
             },
             Pattern::Variant(name, nested) => {
                 if let Some(tag) = self.enum_variant_tags.get(name) {
-                    lines.push(format!("    cmp {}, {}", value_reg, tag));
+                    lines.push(format!("    cmp {}, 0", value_reg));
+                    lines.push(format!("    je {}", fail_label));
+                    lines.push(format!("    cmp QWORD [{}], {}", value_reg, tag));
                     lines.push(format!("    jne {}", fail_label));
                     if !nested.is_empty() {
-                        lines.push(
-                            "    ; variant payload pattern checks are not represented in asm backend"
-                                .to_string(),
-                        );
+                        lines.push(format!("    cmp QWORD [{}+8], {}", value_reg, nested.len()));
+                        lines.push(format!("    jne {}", fail_label));
+                        for (index, nested_pattern) in nested.iter().enumerate() {
+                            lines.push(format!(
+                                "    mov r14, QWORD [{}+{}]",
+                                value_reg,
+                                16 + index * 8
+                            ));
+                            self.emit_pattern_guard(nested_pattern, "r14", fail_label, lines);
+                        }
                     }
                 } else {
                     lines.push(format!("    ; unknown enum variant '{}'", name));
@@ -840,28 +853,34 @@ impl AsmGenerator {
                 self.store_pattern_binding(name, Some(value_reg), ctx, lines)
             }
             Pattern::Variant(_, nested) => {
-                for nested_pattern in nested {
-                    self.emit_pattern_bindings_zeroed(nested_pattern, ctx, lines);
-                }
+                self.emit_variant_pattern_bindings(nested, value_reg, ctx, lines);
             }
             _ => {}
         }
     }
 
-    fn emit_pattern_bindings_zeroed(
+    fn emit_variant_pattern_bindings(
         &self,
-        pattern: &Pattern,
+        patterns: &[Pattern],
+        value_reg: &str,
         ctx: &mut FunctionContext,
         lines: &mut Vec<String>,
     ) {
-        match pattern {
-            Pattern::Identifier(name) => self.store_pattern_binding(name, None, ctx, lines),
-            Pattern::Variant(_, nested) => {
-                for nested_pattern in nested {
-                    self.emit_pattern_bindings_zeroed(nested_pattern, ctx, lines);
+        for (index, pattern) in patterns.iter().enumerate() {
+            lines.push(format!(
+                "    mov r14, QWORD [{}+{}]",
+                value_reg,
+                16 + index * 8
+            ));
+            match pattern {
+                Pattern::Identifier(name) => {
+                    self.store_pattern_binding(name, Some("r14"), ctx, lines)
                 }
+                Pattern::Variant(_, nested) => {
+                    self.emit_variant_pattern_bindings(nested, "r14", ctx, lines)
+                }
+                Pattern::Wildcard | Pattern::Literal(_) => {}
             }
-            _ => {}
         }
     }
 
@@ -1010,16 +1029,14 @@ impl AsmGenerator {
                 Expr::Literal(Literal::Identifier(name)) => {
                     if self.type_layouts.contains_key(name) {
                         self.emit_constructor_call(name, &call.arguments, ctx, lines);
-                    } else if let Some(enum_name) = self.enum_variant_types.get(name) {
-                        if let Some(tag) = self.enum_variant_tags.get(name) {
-                            lines.push(format!(
-                                "    ; lowering enum constructor {}::{} to tag",
-                                enum_name, name
-                            ));
-                            lines.push(format!("    mov rax, {}", tag));
-                        } else {
-                            lines.push("    mov rax, 0".to_string());
-                        }
+                    } else if let Some(enum_name) = self.enum_variant_types.get(name).cloned() {
+                        self.emit_enum_variant_constructor(
+                            &enum_name,
+                            name,
+                            &call.arguments,
+                            ctx,
+                            lines,
+                        );
                     } else {
                         let registers = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
                         for (index, arg) in call.arguments.iter().enumerate() {
@@ -1178,6 +1195,60 @@ impl AsmGenerator {
             }
             lines.push("    mov rdi, QWORD [rsp]".to_string());
             lines.push(format!("    call {}", init_sig.label));
+        }
+
+        lines.push("    mov rax, QWORD [rsp]".to_string());
+        lines.push("    add rsp, 8".to_string());
+    }
+
+    fn emit_enum_variant_constructor(
+        &mut self,
+        enum_name: &str,
+        variant_name: &str,
+        args: &[Expr],
+        ctx: &mut FunctionContext,
+        lines: &mut Vec<String>,
+    ) {
+        let Some(tag) = self.enum_variant_tags.get(variant_name).copied() else {
+            lines.push(format!(
+                "    ; unknown enum variant '{}::{}'",
+                enum_name, variant_name
+            ));
+            lines.push("    mov rax, 0".to_string());
+            return;
+        };
+
+        let payload_len = self
+            .enum_variant_payloads
+            .get(variant_name)
+            .copied()
+            .unwrap_or(args.len());
+
+        if args.len() != payload_len {
+            lines.push(format!(
+                "    ; enum constructor '{}::{}' expects {} args, got {}",
+                enum_name,
+                variant_name,
+                payload_len,
+                args.len()
+            ));
+        }
+
+        let alloc_size = ((payload_len + 2) * 8) as i64;
+        lines.push(format!("    mov rdi, {}", alloc_size.max(16)));
+        lines.push("    call __kek_alloc".to_string());
+        lines.push("    push rax".to_string());
+        lines.push(format!("    mov QWORD [rax], {}", tag));
+        lines.push(format!("    mov QWORD [rax+8], {}", payload_len));
+
+        for index in 0..payload_len {
+            if let Some(arg) = args.get(index) {
+                self.emit_expr(arg, ctx, lines);
+            } else {
+                lines.push("    mov rax, 0".to_string());
+            }
+            lines.push("    mov rbx, QWORD [rsp]".to_string());
+            lines.push(format!("    mov QWORD [rbx+{}], rax", 16 + index * 8));
         }
 
         lines.push("    mov rax, QWORD [rsp]".to_string());
@@ -1655,8 +1726,65 @@ fun main(): Num {
             &mut lines,
         );
 
-        assert!(lines.contains(&"    cmp r13, 3".to_string()));
+        assert!(lines.contains(&"    cmp r13, 0".to_string()));
+        assert!(lines.contains(&"    je .match_fail".to_string()));
+        assert!(lines.contains(&"    cmp QWORD [r13], 3".to_string()));
         assert!(lines.contains(&"    jne .match_fail".to_string()));
+    }
+
+    #[test]
+    fn emit_pattern_bindings_variant_loads_payload_values() {
+        let generator = AsmGenerator::new();
+        let mut lines = Vec::new();
+        let mut ctx = FunctionContext {
+            var_offsets: HashMap::from([("v".to_string(), 8)]),
+            var_types: HashMap::from([("v".to_string(), Type::Num)]),
+            epilogue_label: ".ep".to_string(),
+            loop_stack: Vec::new(),
+        };
+
+        generator.emit_pattern_bindings(
+            &Pattern::Variant(
+                "Some".to_string(),
+                vec![Pattern::Identifier("v".to_string())],
+            ),
+            "r13",
+            &mut ctx,
+            &mut lines,
+        );
+
+        assert!(lines.contains(&"    mov r14, QWORD [r13+16]".to_string()));
+        assert!(lines.contains(&"    mov QWORD [rbp-8], r14".to_string()));
+    }
+
+    #[test]
+    fn emit_enum_variant_constructor_allocates_payload_object() {
+        let mut generator = AsmGenerator::new();
+        generator.enum_variant_tags.insert("Some".to_string(), 0);
+        generator
+            .enum_variant_payloads
+            .insert("Some".to_string(), 1);
+        let mut lines = Vec::new();
+        let mut ctx = FunctionContext {
+            var_offsets: HashMap::new(),
+            var_types: HashMap::new(),
+            epilogue_label: ".ep".to_string(),
+            loop_stack: Vec::new(),
+        };
+
+        generator.emit_enum_variant_constructor(
+            "Maybe",
+            "Some",
+            &[Expr::Literal(Literal::Num(7.0))],
+            &mut ctx,
+            &mut lines,
+        );
+
+        assert!(lines.contains(&"    mov rdi, 24".to_string()));
+        assert!(lines.contains(&"    call __kek_alloc".to_string()));
+        assert!(lines.contains(&"    mov QWORD [rax], 0".to_string()));
+        assert!(lines.contains(&"    mov QWORD [rax+8], 1".to_string()));
+        assert!(lines.contains(&"    mov QWORD [rbx+16], rax".to_string()));
     }
 
     #[test]

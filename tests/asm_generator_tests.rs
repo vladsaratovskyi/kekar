@@ -211,3 +211,33 @@ fun main() -> Num {
     assert!(!output.contains("break is not implemented in asm backend"));
     assert!(!output.contains("continue is not implemented in asm backend"));
 }
+
+#[test]
+fn lowers_enum_constructor_and_payload_match_runtime_model() {
+    let source = r#"
+enum Maybe {
+    Some(Num),
+    Empty
+}
+
+fun unwrap(x: Maybe) -> Num {
+    match x {
+        Some(v) => { return v; },
+        Empty() => { return 0; }
+    }
+    return 0;
+}
+
+fun main() -> Num {
+    return unwrap(Some(7));
+}
+"#;
+
+    let output = compile_to_asm(source);
+
+    assert!(output.contains("mov rdi, 24"));
+    assert!(output.contains("mov QWORD [rax+8], 1"));
+    assert!(output.contains("cmp QWORD [r13], 0"));
+    assert!(output.contains("mov r14, QWORD [r13+16]"));
+    assert!(!output.contains("variant payload pattern checks are not represented in asm backend"));
+}

@@ -778,6 +778,86 @@ fun main() -> Num {
 }
 
 #[test]
+fn sema_rejects_class_constructor_arity_mismatch_via_init_signature() {
+    let source = r#"
+class Counter {
+    var value: Num;
+
+    fun init(start: Num) {
+        this.value = start;
+    }
+}
+
+fun main() -> Num {
+    var c: Counter = Counter();
+    return 0;
+}
+"#;
+
+    assert_has_error(source, "Class 'Counter' constructor expects 1 args, got 0");
+}
+
+#[test]
+fn sema_rejects_class_constructor_argument_type_mismatch_via_init_signature() {
+    let source = r#"
+class Counter {
+    var value: Num;
+
+    fun init(start: Num) {
+        this.value = start;
+    }
+}
+
+fun main() -> Num {
+    var c: Counter = Counter(true);
+    return 0;
+}
+"#;
+
+    assert_has_error(
+        source,
+        "Class 'Counter' constructor argument 0 expected Num, got Bool",
+    );
+}
+
+#[test]
+fn sema_accepts_class_constructor_without_init_using_field_order() {
+    let source = r#"
+class Pair {
+    var left: Num;
+    var right: Num;
+}
+
+fun main() -> Num {
+    var p: Pair = Pair(1, 2);
+    return p.left;
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}
+
+#[test]
+fn sema_rejects_zero_payload_enum_variant_constructor_arguments() {
+    let source = r#"
+enum Maybe {
+    Empty
+}
+
+fun main() -> Num {
+    var x: Maybe = Empty(1);
+    return 0;
+}
+"#;
+
+    assert_has_error(
+        source,
+        "Enum variant 'Empty' constructor expects 0 args, got 1",
+    );
+}
+
+#[test]
 fn sema_rejects_class_field_without_explicit_type() {
     let source = r#"
 class Bad {
