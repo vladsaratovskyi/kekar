@@ -61,8 +61,8 @@ fun main(): Num {
 
     assert!(output.contains("add:"));
     assert!(output.contains("main:"));
-    assert!(output.contains("mov rdi, rax"));
-    assert!(output.contains("mov rsi, rax"));
+    assert!(output.contains("pop rsi"));
+    assert!(output.contains("pop rdi"));
     assert!(output.contains("call add"));
 }
 
