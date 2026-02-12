@@ -468,3 +468,32 @@ fun hidden() -> Num {
     assert_has_error(&entry, "Function 'hidden' is private and cannot be called");
     fs::remove_dir_all(root).expect("should clean test workspace");
 }
+
+#[test]
+fn workspace_accepts_generic_type_syntax_and_postfix_try() {
+    let root = temp_workspace("generic-and-try");
+    let entry = root.join("main.kek");
+
+    write_file(
+        &entry,
+        r#"
+struct Boxed {
+    value: Num;
+}
+
+fun id(v: Num) -> Num {
+    return v;
+}
+
+fun main() -> Num {
+    var b: Boxed<Num> = Boxed(3);
+    return id(b.value)?;
+}
+"#,
+    );
+
+    let result = analyze_workspace(&entry);
+    assert!(result.is_ok(), "Expected no workspace errors: {result:?}");
+
+    fs::remove_dir_all(root).expect("should clean test workspace");
+}

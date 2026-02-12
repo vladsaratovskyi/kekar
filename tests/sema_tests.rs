@@ -894,3 +894,36 @@ fun main() -> Num {
         "Class field 'Bad.value' must declare a concrete type",
     );
 }
+
+#[test]
+fn sema_accepts_generic_type_syntax_for_known_base_type() {
+    let source = r#"
+struct Boxed {
+    value: Num;
+}
+
+fun main() -> Num {
+    var b: Boxed<Num> = Boxed(7);
+    return b.value;
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}
+
+#[test]
+fn sema_accepts_postfix_try_operator_passthrough_typing() {
+    let source = r#"
+fun id(v: Num) -> Num {
+    return v;
+}
+
+fun main() -> Num {
+    return id(1)?;
+}
+"#;
+
+    let result = analyze_source(source);
+    assert!(result.is_ok(), "Expected no semantic errors: {result:?}");
+}

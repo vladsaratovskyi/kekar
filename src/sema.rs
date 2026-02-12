@@ -1275,6 +1275,7 @@ impl SemanticAnalyzer {
                         }
                         Type::Bool
                     }
+                    Token::Question => right_ty,
                     _ => Type::None,
                 }
             }

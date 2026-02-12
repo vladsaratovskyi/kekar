@@ -453,6 +453,11 @@ impl Parser {
         Expr::Assignment(Box::new(left), Box::new(right))
     }
 
+    fn parse_try_expr(&mut self, left: Expr) -> Expr {
+        self.expect(&Token::Question);
+        Expr::Unary(Token::Question, Box::new(left))
+    }
+
     fn parse_if_stmt(&mut self) -> Stmt {
         self.get_token_and_move();
         let condition = self.parse_expr(Binding::Assign);
@@ -944,6 +949,7 @@ impl Parser {
             Token::LeftParen => self.parse_fun_call_expr(left),
             Token::LeftBrace => self.parse_member_exrp(left),
             Token::Dot => self.parse_member_exrp(left),
+            Token::Question => self.parse_try_expr(left),
             _ => panic!(
                 "No handler found for operator token {}",
                 self.current_token()
@@ -986,6 +992,7 @@ impl Parser {
             Token::LeftParen => Binding::Call,
             Token::LeftBrace => Binding::Member,
             Token::Dot => Binding::Member,
+            Token::Question => Binding::Member,
             _ => Binding::Def,
         }
     }
@@ -1002,6 +1009,32 @@ impl Parser {
             "" => Type::None,
             s => Type::Identifier(s.to_string()),
         };
+
+        if self.current_token() == &Token::Less {
+            if !matches!(t, Type::Identifier(_)) {
+                panic!("Generic type arguments are only allowed for identifier types");
+            }
+
+            self.expect(&Token::Less);
+            while self.has_tokens()
+                && !matches!(self.current_token(), Token::Greater | Token::ShiftRight)
+            {
+                let _ = self.parse_type();
+                if !matches!(
+                    self.current_token(),
+                    Token::Greater | Token::ShiftRight | Token::Eof
+                ) {
+                    self.expect(&Token::Coma);
+                }
+            }
+
+            if self.current_token() == &Token::ShiftRight {
+                // Split `>>` into `>` + `>` while parsing nested generic type closings.
+                self.tokens[self.current] = Token::Greater;
+            } else {
+                self.expect(&Token::Greater);
+            }
+        }
 
         if self.current_token() == &Token::LeftBrace {
             self.expect(&Token::LeftBrace);

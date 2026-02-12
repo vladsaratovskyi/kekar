@@ -191,6 +191,24 @@ fun main() -> Num {
 }
 
 #[test]
+fn lowers_postfix_try_operator_as_passthrough_expression() {
+    let source = r#"
+fun id(v: Num) -> Num {
+    return v;
+}
+
+fun main() -> Num {
+    return id(5)?;
+}
+"#;
+
+    let output = compile_to_asm(source);
+
+    assert!(output.contains("call id"));
+    assert!(!output.contains("unsupported unary operator"));
+}
+
+#[test]
 fn lowers_string_and_array_literals() {
     let source = r#"
 fun main() -> Num {

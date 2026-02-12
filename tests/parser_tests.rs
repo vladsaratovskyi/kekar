@@ -5,10 +5,10 @@ mod tests {
 
     use kekar::{
         ast::{
-            BlockStmt, BreakStmt, ClassStmt, ConstStmt, ContinueStmt, EnumStmt, EnumVariant, Expr,
-            ExprStmt, FieldDecl, ForStmt, FunStmt, IfStmt, ImplStmt, ImportStmt, Literal, MatchArm,
-            MatchStmt, MemberExpr, ModStmt, Param, Pattern, PubStmt, ReturnStmt, Stmt, StructStmt,
-            Type, UseStmt, VarStmt, WhileStmt,
+            BlockStmt, BreakStmt, CallExpr, ClassStmt, ConstStmt, ContinueStmt, EnumStmt,
+            EnumVariant, Expr, ExprStmt, FieldDecl, ForStmt, FunStmt, IfStmt, ImplStmt, ImportStmt,
+            Literal, MatchArm, MatchStmt, MemberExpr, ModStmt, Param, Pattern, PubStmt, ReturnStmt,
+            Stmt, StructStmt, Type, UseStmt, VarStmt, WhileStmt,
         },
         lexer::Token,
         parser::Parser,
@@ -875,5 +875,136 @@ mod tests {
 
         assert!(!errors.is_empty(), "expected at least one parser error");
         assert!(errors[0].message.contains("Expected"));
+    }
+
+    #[test]
+    fn parse_generic_type_annotation_erases_to_base_identifier_type() {
+        let tokens = vec![
+            Token::Fun,
+            Token::Identifier("main".to_string()),
+            Token::LeftParen,
+            Token::Identifier("value".to_string()),
+            Token::Colon,
+            Token::Identifier("Result".to_string()),
+            Token::Less,
+            Token::Identifier("Num".to_string()),
+            Token::Coma,
+            Token::Identifier("String".to_string()),
+            Token::Greater,
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Number(1.0),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![Stmt::Fun(FunStmt {
+                name: "main".to_string(),
+                return_type: Type::Num,
+                params: vec![Param {
+                    name: "value".to_string(),
+                    param_type: Type::Identifier("Result".to_string()),
+                }],
+                block: Box::new(Stmt::Block(BlockStmt {
+                    stmts: vec![Stmt::Return(ReturnStmt {
+                        return_expr: Expr::Literal(Literal::Num(1.0)),
+                    })],
+                })),
+            })],
+        };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn parse_nested_generic_type_closing_with_shift_right_token() {
+        let tokens = vec![
+            Token::Fun,
+            Token::Identifier("main".to_string()),
+            Token::LeftParen,
+            Token::Identifier("value".to_string()),
+            Token::Colon,
+            Token::Identifier("Outer".to_string()),
+            Token::Less,
+            Token::Identifier("Inner".to_string()),
+            Token::Less,
+            Token::Identifier("Num".to_string()),
+            Token::ShiftRight,
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Number(1.0),
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+        let Stmt::Fun(fun_stmt) = &result.stmts[0] else {
+            panic!("expected function");
+        };
+
+        assert_eq!(
+            fun_stmt.params[0].param_type,
+            Type::Identifier("Outer".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_postfix_try_operator() {
+        let tokens = vec![
+            Token::Fun,
+            Token::Identifier("main".to_string()),
+            Token::LeftParen,
+            Token::RightParen,
+            Token::Arrow,
+            Token::Identifier("Num".to_string()),
+            Token::LeftBracket,
+            Token::Return,
+            Token::Identifier("call".to_string()),
+            Token::LeftParen,
+            Token::RightParen,
+            Token::Question,
+            Token::Semicolon,
+            Token::RightBracket,
+            Token::Eof,
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+
+        let expected = BlockStmt {
+            stmts: vec![Stmt::Fun(FunStmt {
+                name: "main".to_string(),
+                return_type: Type::Num,
+                params: vec![],
+                block: Box::new(Stmt::Block(BlockStmt {
+                    stmts: vec![Stmt::Return(ReturnStmt {
+                        return_expr: Expr::Unary(
+                            Token::Question,
+                            Box::new(Expr::Call(CallExpr {
+                                callee: Box::new(Expr::Literal(Literal::Identifier(
+                                    "call".to_string(),
+                                ))),
+                                arguments: vec![],
+                            })),
+                        ),
+                    })],
+                })),
+            })],
+        };
+
+        assert_eq!(result, expected);
     }
 }

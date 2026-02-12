@@ -1014,6 +1014,7 @@ impl AsmGenerator {
                         lines.push("    sete al".to_string());
                         lines.push("    movzx rax, al".to_string());
                     }
+                    Token::Question => {}
                     _ => lines.push("    ; unsupported unary operator".to_string()),
                 }
             }
@@ -1418,6 +1419,7 @@ impl AsmGenerator {
             Expr::Unary(op, right) => match op {
                 Token::Not => Type::Bool,
                 Token::Minus => self.infer_expr_type(right, ctx),
+                Token::Question => self.infer_expr_type(right, ctx),
                 _ => Type::None,
             },
             Expr::Binary(_, op, _) => match op {
